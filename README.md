@@ -31,7 +31,7 @@ ORM 系列音频插件的 Rust 重写仓库，插件框架用 [truce](https://tr
   （语言/主题/色相/饱和度），关闭设置面板即落盘。
 - **i18n**：中英全量字符串 + 系统语言探测；16 处 tooltip 与原版一一对应。
 
-对照截图：`docs/screenshots/bandpass-m4.png`（当前渲染，
+对照截图：`docs/screenshots/bandpass-m5.png`（当前渲染，
 `cargo run -p orm-bandpass --example shot` 生成 `target/bandpass-ui.png`）；
 `docs/screenshots/bandpass-m2.png`、`bandpass-m3.png` 保留早期骨架。
 `shot` 自己建 egui Context 并跑两帧，因为 egui 的字体定义要到下一帧才生效，

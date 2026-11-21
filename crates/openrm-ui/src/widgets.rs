@@ -781,11 +781,11 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
         Pos2::new(rect.left(), rect.top()),
         Pos2::new(rect.right() - 16.0 - 6.0, rect.bottom()),
     );
-    // 原版：mWidgetBounds 去掉文本列后，再上下各留 kPlotTopInset(30) 与
-    // mHandleSize(=18) 的边距，轨道才从 48 到 B-18。
+    // 原版：手柄行程从 T+38 到 B-8；浅色轨道再向两端各扩 8（T+30..B），
+    // 深色填充从手柄一直画到轨道底（B）。
     let top = rect.top() + 30.0;
-    let track_y0 = top + 18.0;
-    let track_y1 = rect.bottom() - 18.0;
+    let track_y0 = top + 8.0;
+    let track_y1 = rect.bottom() - 8.0;
     let cx = track_col.center().x;
     let font = fonts::semibold(TEXT_SIZE);
     let value_font = fonts::regular(TEXT_SIZE);
@@ -793,9 +793,9 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     let norm = ((m.db + 96.0) / 108.0).clamp(0.0, 1.0) as f32;
     let y = track_y1 - norm * (track_y1 - track_y0);
 
-    vtrack(&p, track_col, track_y0, track_y1, theme);
+    vtrack(&p, track_col, top, rect.bottom(), theme);
     p.rect_filled(
-        Rect::from_min_max(Pos2::new(cx - 2.0, y), Pos2::new(cx + 2.0, track_y1)),
+        Rect::from_min_max(Pos2::new(cx - 2.0, y), Pos2::new(cx + 2.0, rect.bottom())),
         2,
         theme.col_500(),
     );
@@ -976,16 +976,19 @@ pub fn hbar(ui: &mut Ui, rect: Rect, m: &BarModel, theme: &Theme, id: Id) -> Bar
         theme.col_700(),
     );
 
+    // 原版 ORMSlider（IVSliderControl，mHandleSize=8）：
+    // 手柄行程 = 控件左右各内缩 8；浅色轨道贯穿整个控件宽度；
+    // 深色填充从控件左缘画到手柄（0 处仍保留 8px 的填充头）。
     let track = Rect::from_min_max(
-        Pos2::new(rect.left() + HANDLE_R + HANDLE_RING, rect.top() + HEADER_H),
-        Pos2::new(rect.right() - HANDLE_R - HANDLE_RING, rect.bottom()),
+        Pos2::new(rect.left() + 8.0, rect.top() + HEADER_H),
+        Pos2::new(rect.right() - 8.0, rect.bottom()),
     );
     let norm = m.norm.clamp(0.0, 1.0) as f32;
     let x = track.left() + norm * track.width();
     htrack(&p, track, rect.left(), rect.right(), theme);
     p.rect_filled(
         Rect::from_min_max(
-            Pos2::new(track.left(), track.center().y - 2.0),
+            Pos2::new(rect.left(), track.center().y - 2.0),
             Pos2::new(x, track.center().y + 2.0),
         ),
         2,
@@ -1519,20 +1522,32 @@ pub fn fade_slider(
     let mut edit = BarEdit::default();
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 0, theme.col_100());
+    // 原版 PresetFadeSlider（IVSliderControl，mHandleSize=8）：
+    // 手柄行程与底部快选槽中心同为 39.5..648.5；深色填充从控件左缘开始。
     let track = Rect::from_min_max(
-        Pos2::new(rect.left() + HANDLE_R + HANDLE_RING, rect.center().y - 2.0),
-        Pos2::new(rect.right() - HANDLE_R - HANDLE_RING, rect.center().y + 2.0),
+        Pos2::new(rect.left() + 8.0, rect.center().y - 2.0),
+        Pos2::new(rect.right() - 8.0, rect.center().y + 2.0),
     );
-    p.rect_filled(track, 2, theme.col_300());
+    p.rect_filled(
+        Rect::from_min_max(
+            Pos2::new(rect.left(), track.top()),
+            Pos2::new(rect.right(), track.bottom()),
+        ),
+        2,
+        theme.col_300(),
+    );
     let x = track.left() + norm.clamp(0.0, 1.0) as f32 * track.width();
     p.rect_filled(
-        Rect::from_min_max(track.min, Pos2::new(x, track.max.y)),
+        Rect::from_min_max(
+            Pos2::new(rect.left(), track.top()),
+            Pos2::new(x, track.bottom()),
+        ),
         2,
         theme.col_500(),
     );
-    // 刻度贯穿整条轨道（原版 mTrackBounds.L..R）
+    // 刻度贯穿手柄行程（原版 mTrackBounds.L..R）
     for i in 0..ticks.max(2) {
-        let tx = rect.left() + rect.width() * i as f32 / (ticks.max(2) - 1) as f32;
+        let tx = track.left() + track.width() * i as f32 / (ticks.max(2) - 1) as f32;
         p.rect_filled(
             Rect::from_min_max(
                 Pos2::new(tx - 1.0, track.top() - 3.0),

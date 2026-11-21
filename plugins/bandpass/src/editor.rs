@@ -49,7 +49,7 @@ const CELL_STEP_Y: f32 = 33.0;
 
 // 底部 quick 槽刻度：原版 mQuickTicks 中心在 39.5..609 之间
 const QUICK_X0: f32 = 39.5;
-const QUICK_X1: f32 = 609.0;
+const QUICK_X1: f32 = 648.5;
 const QUICK_W: f32 = 36.0;
 const QUICK_Y: f32 = 552.0;
 const QUICK_H: f32 = 26.0;
@@ -662,8 +662,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         let tr = |k: Key| strings::tr(lang, k);
 
         let (full, _) = ui.allocate_exact_size(Vec2::new(UI_WIDTH, UI_HEIGHT), Sense::hover());
-        ui.painter_at(full)
-            .rect_filled(full, 0, theme.warm_gray(238));
+        ui.painter_at(full).rect_filled(full, 0, theme.col_100());
 
         // 拖拽状态（预设槽交换）
         if let Some(from) = self.drag_from {
@@ -1307,21 +1306,31 @@ impl EditorUi<BandPassParams> for BandPassUi {
         // 标题区：ORM（32 Bold）+ 齿轮 + 版本号 + BandPass
         {
             let pnt = ui.painter_at(full);
+            let orm_font = fonts::bold(32.0);
+            let orm_w = pnt
+                .layout_no_wrap("ORM".to_owned(), orm_font.clone(), theme.col_900())
+                .size()
+                .x;
             pnt.text(
                 Pos2::new(COL1_X, 545.0),
                 Align2::LEFT_TOP,
                 "ORM",
-                fonts::bold(32.0),
+                orm_font,
                 theme.col_900(),
             );
-            let gear = rect(826.0, 547.0, 854.0, 575.0);
+            // 原版：MeasureText("ORM") 的墨迹右缘 +8 放齿轮，齿轮边长 = 墨迹高度，
+            // 版本号再在齿轮右侧 +8，底边与 575 对齐。
+            let gear_l = COL1_X + orm_w + 7.0;
+            let gear_size = 23.0;
+            let gear = rect(gear_l, 553.0, gear_l + gear_size, 553.0 + gear_size);
+            let gear_r = gear.right();
             if widgets::gear_button(ui, gear, &theme, Id::new("gear"), None) {
                 self.settings_open = true;
             }
             pnt.text(
-                Pos2::new(862.0, 575.0),
+                Pos2::new(gear_r + 8.0, 575.0),
                 Align2::LEFT_BOTTOM,
-                "v0.5.1",
+                &format!("v{}", env!("CARGO_PKG_VERSION")),
                 fonts::regular(20.0),
                 theme.col_500(),
             );

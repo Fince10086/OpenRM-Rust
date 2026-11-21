@@ -1233,7 +1233,7 @@ const REDO_PATH: &[SvgCmd] = &[
     SvgCmd(1, [695.434, 862.258, 0., 0., 0., 0.]),
     SvgCmd(1, [695.434, 969.248, 0., 0., 0., 0.]),
     SvgCmd(1, [361.091, 969.248, 0., 0., 0., 0.]),
-    SvgCmd(2, [161.662, 969.248, 0., 0., 0., 608.157]),
+    SvgCmd(2, [161.662, 969.248, 0., 807.586, 0., 608.157]),
     SvgCmd(2, [0., 408.728, 161.662, 247.066, 361.091, 247.066]),
     SvgCmd(1, [819.141, 247.066, 0., 0., 0., 0.]),
     SvgCmd(1, [702.495, 130.394, 0., 0., 0., 0.]),
@@ -1338,7 +1338,7 @@ const EXPORT_PATH: &[SvgCmd] = &[
 fn draw_svg_path(p: &egui::Painter, rect: Rect, cmds: &[SvgCmd], color: Color32) {
     let cx = rect.center().x;
     let cy = rect.center().y;
-    let s = 16.0 / 1024.0;
+    let s = 18.5 / 1024.0;
     let map = |x: f32, y: f32| Pos2::new(cx + (x - 512.0) * s, cy + (y - 512.0) * s);
     let mut subpaths: Vec<Vec<Pos2>> = Vec::new();
     let mut cur: Vec<Pos2> = Vec::new();
@@ -1363,8 +1363,8 @@ fn draw_svg_path(p: &egui::Painter, rect: Rect, cmds: &[SvgCmd], color: Color32)
                 let c1 = map(e.1[0], e.1[1]);
                 let c2 = map(e.1[2], e.1[3]);
                 let to = map(e.1[4], e.1[5]);
-                for k in 1..=8 {
-                    let t = k as f32 / 8.0;
+                for k in 1..=14 {
+                    let t = k as f32 / 14.0;
                     let inv = 1.0 - t;
                     let w0 = inv * inv * inv;
                     let w1 = 3.0 * inv * inv * t;
@@ -1407,6 +1407,9 @@ fn draw_svg_path(p: &egui::Painter, rect: Rect, cmds: &[SvgCmd], color: Color32)
     if ymax <= ymin {
         return;
     }
+    // 2x 超采样扫描线：细笔画的箭头只有 1–2px 厚，步长 0.5 会留下毛刺；
+    // 这里用 0.2 步长、行高 0.28 的四边形拼一个 Mesh，一次提交。
+    let mut mesh = egui::Mesh::default();
     let mut y = ymin;
     while y <= ymax {
         let mut xs: Vec<f32> = Vec::new();
@@ -1420,16 +1423,28 @@ fn draw_svg_path(p: &egui::Painter, rect: Rect, cmds: &[SvgCmd], color: Color32)
         let mut i = 0;
         while i + 1 < xs.len() {
             if xs[i + 1] - xs[i] > 0.01 {
-                p.rect_filled(
-                    Rect::from_min_max(Pos2::new(xs[i], y), Pos2::new(xs[i + 1], y + 0.6)),
-                    0,
-                    color,
-                );
+                let (x0, x1) = (xs[i], xs[i + 1]);
+                let i0 = mesh.vertices.len() as u32;
+                for p in [
+                    Pos2::new(x0, y),
+                    Pos2::new(x1, y),
+                    Pos2::new(x1, y + 0.28),
+                    Pos2::new(x0, y + 0.28),
+                ] {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos: p,
+                        uv: egui::epaint::WHITE_UV,
+                        color,
+                    });
+                }
+                mesh.indices
+                    .extend_from_slice(&[i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
             }
             i += 2;
         }
-        y += 0.5;
+        y += 0.2;
     }
+    p.add(Shape::mesh(mesh));
 }
 
 pub fn icon_button(

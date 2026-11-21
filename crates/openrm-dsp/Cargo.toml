@@ -1,0 +1,10 @@
+[package]
+name = "openrm-dsp"
+description = "OpenRM 插件共用的纯 Rust DSP 核心（无框架依赖，可离线测试）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

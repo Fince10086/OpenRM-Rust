@@ -1,0 +1,14 @@
+[vendor]
+name = "OpenRM"
+id = "OpenRM"
+url = "https://github.com/OpenRM"
+au_manufacturer = "OpRM"
+
+[[plugin]]
+name = "ORM BandPass"
+bundle_id = "orm.bandpass"
+crate = "orm-bandpass"
+description = "双通道带通 / 带阻滤波器，带 7 路随机调制。"
+category = "effect"
+fourcc = "ORMB"
+vst3_subcategory = "Filter"

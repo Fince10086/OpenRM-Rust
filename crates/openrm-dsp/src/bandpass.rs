@@ -274,6 +274,9 @@ impl Default for BandPassCore {
     }
 }
 
+/// +12 dB 对应的线性增益。
+const MAX_GAIN_LIN: f32 = 3.981_071_7;
+
 impl BandPassCore {
     pub fn new() -> Self {
         Self {
@@ -313,8 +316,10 @@ impl BandPassCore {
 
     pub fn set_params(&mut self, p: &Params) {
         self.params = *p;
-        self.params.gain_l = p.gain_l.clamp(0.0, 2.0);
-        self.params.gain_r = p.gain_r.clamp(0.0, 2.0);
+        // 界面允许 -96..+12 dB；线性增益上限对应 +12 dB（10^(12/20)）。
+        // C++ 版这里误写到 2.0（只到 +6.02 dB），Rust 版按界面值对齐。
+        self.params.gain_l = p.gain_l.clamp(0.0, MAX_GAIN_LIN);
+        self.params.gain_r = p.gain_r.clamp(0.0, MAX_GAIN_LIN);
         self.params.mix = p.mix.clamp(0.0, 1.0);
         for c in 0..4 {
             self.params.random_amount[c] = p.random_amount[c].clamp(0.0, 1.0);

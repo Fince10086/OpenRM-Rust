@@ -170,6 +170,21 @@ struct SpectrumUi {
     curves_r: [Vec<(f32, f32)>; 2],
 }
 
+/// 把交织帧 `[inL, inR, wetL, wetR]` 拆成四路。
+fn deinterleave_hop(chunk: &[f32]) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+    let mut l = Vec::with_capacity(chunk.len() / 4);
+    let mut r = Vec::with_capacity(chunk.len() / 4);
+    let mut wl = Vec::with_capacity(chunk.len() / 4);
+    let mut wr = Vec::with_capacity(chunk.len() / 4);
+    for f in chunk.chunks_exact(4) {
+        l.push(f[0]);
+        r.push(f[1]);
+        wl.push(f[2]);
+        wr.push(f[3]);
+    }
+    (l, r, wl, wr)
+}
+
 impl SpectrumUi {
     fn new(sr: f64) -> Self {
         Self {
@@ -189,12 +204,10 @@ impl SpectrumUi {
         });
         while self.pending.len() >= SPEC_HOP * 4 {
             let chunk: Vec<f32> = self.pending.drain(..SPEC_HOP * 4).collect();
-            let dry: Vec<f32> = chunk.chunks_exact(4).map(|f| f[0]).collect();
-            let wet_l: Vec<f32> = chunk.chunks_exact(4).map(|f| f[2]).collect();
-            let wet_r: Vec<f32> = chunk.chunks_exact(4).map(|f| f[3]).collect();
-            self.l.push_hop(&dry, &wet_l);
-            // 原版右垫的干信号取左声道（既有行为，保持复刻）
-            self.r.push_hop(&dry, &wet_r);
+            let (dry_l, dry_r, wet_l, wet_r) = deinterleave_hop(&chunk);
+            self.l.push_hop(&dry_l, &wet_l);
+            // 右垫取右声道自己的干信号（修正原版误用 mSpecInL 的 bug）
+            self.r.push_hop(&dry_r, &wet_r);
             for ch in 0..2 {
                 self.curves_l[ch] = self.l.curve(ch);
                 self.curves_r[ch] = self.r.curve(ch);
@@ -1888,4 +1901,20 @@ pub fn create(params: Arc<BandPassParams>) -> Box<dyn Editor> {
     .with_font(fonts::REGULAR)
     .resizable(false)
     .into_editor()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deinterleave_hop;
+
+    #[test]
+    fn right_channel_dry_is_own_channel() {
+        // 每帧 [inL, inR, wetL, wetR]；右垫必须拿 inR，而不是原版误用的 inL。
+        let chunk = [1.0, 2.0, 10.0, 20.0, 3.0, 4.0, 30.0, 40.0];
+        let (l, r, wl, wr) = deinterleave_hop(&chunk);
+        assert_eq!(l, vec![1.0, 3.0]);
+        assert_eq!(r, vec![2.0, 4.0]);
+        assert_eq!(wl, vec![10.0, 30.0]);
+        assert_eq!(wr, vec![20.0, 40.0]);
+    }
 }

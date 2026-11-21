@@ -184,6 +184,24 @@ fn mix_dry_wet() {
 }
 
 #[test]
+fn gain_uses_full_plus_12db_range() {
+    // 界面范围 -96..+12 dB；核心不应再额外压到 +6.02 dB。
+    let p = Params {
+        freq_l: 2000.0,
+        bw_l: 1.0,
+        gain_l: 10f64.powf(12.0 / 20.0) as f32,
+        ..make_params()
+    };
+    let mut core = fresh_core(&p);
+    let g = measure_gain(&mut core, 2000.0, 1.0);
+    println!("+12 dB center gain={g:.3} (expect 3.981)");
+    assert!(
+        (g - 10f64.powf(12.0 / 20.0)).abs() < 0.1,
+        "+12 dB 应完整生效"
+    );
+}
+
+#[test]
 fn center_gain_normalised() {
     let mut core = BandPassCore::new();
     core.prepare(FS);

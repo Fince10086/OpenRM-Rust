@@ -1739,7 +1739,7 @@ impl BandPassUi {
             Pos2::new(l + 22.0, hue_hdr_y),
             Align2::LEFT_CENTER,
             tr(Key::Hue),
-            fonts::semibold(20.0),
+            fonts::regular(20.0),
             theme.col_900(),
         );
         let hue_val = format!("{}\u{00b0}", self.theme.hue);
@@ -1795,7 +1795,7 @@ impl BandPassUi {
             Pos2::new(l + 22.0, sat_hdr_y),
             Align2::LEFT_CENTER,
             tr(Key::Saturation),
-            fonts::semibold(20.0),
+            fonts::regular(20.0),
             theme.col_900(),
         );
         let sat_key = match self.theme.sat_max {
@@ -1813,7 +1813,13 @@ impl BandPassUi {
         );
         let st = rect(l, card.top() + 243.0, r, card.top() + 247.0);
         pnt.rect_filled(st, 2, theme.col_300());
-        let sn = (self.theme.sat_max as f32 / 50.0).clamp(0.0, 1.0);
+        // 原版：旋钮位置按离散档位索引（0/1/2/3），而不是按百分比线性
+        const SAT_VALS: [u8; 4] = [0, 15, 30, 50];
+        let sat_idx = SAT_VALS
+            .iter()
+            .position(|&v| v == self.theme.sat_max)
+            .unwrap_or(3) as f32;
+        let sn = sat_idx / 3.0;
         let sx = st.left() + sn * st.width();
         pnt.rect_filled(
             Rect::from_min_max(st.min, Pos2::new(sx, st.max.y)),
@@ -1830,7 +1836,8 @@ impl BandPassUi {
         if sresp.dragged() || sresp.clicked() {
             if let Some(pos) = ui.ctx().pointer_interact_pos() {
                 let n = ((pos.x - st.left()) / st.width()).clamp(0.0, 1.0);
-                let sat = (n * 50.0 / 5.0).round() as u8 * 5;
+                // 原版 DragTo：lround(n*3) 取最近档
+                let sat = SAT_VALS[(n * 3.0).round() as usize];
                 self.theme.sat_max = sat;
                 save_settings(&Settings {
                     lang: self.lang,

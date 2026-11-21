@@ -33,6 +33,10 @@ fn y_to_bw(y: f32, plot: Rect) -> f64 {
     BW_MIN * (BW_MAX / BW_MIN).powf(n)
 }
 
+pub fn fmt_hz_unit(f: f64) -> String {
+    format!("{:.0}Hz", f.max(0.0))
+}
+
 pub fn fmt_hz(f: f64) -> String {
     if f >= 10_000.0 {
         format!("{:.1}k", f / 1000.0)
@@ -53,12 +57,23 @@ pub fn fmt_db(db: f32) -> String {
     }
 }
 
-/// 滤波垫：X = 频率（对数），Y = 带宽倍率（对数）。与 C++ `FilterNodePad` 同构。
-pub struct PadModel {
-    pub label: &'static str,
+/// 滤波垫：X = 频率（对数），Y = 带宽倍率（对数）。几何量逐项取自 C++ `FilterNodePad`。
+pub struct PadModel<'a> {
+    pub center_prefix: &'a str,
+    pub width_prefix: &'a str,
+    pub slope_prefix: &'a str,
+    pub pass_label: &'a str,
+    pub side_label: &'a str,
+    pub pass: bool,
     pub freq: f64,
     pub bw_mult: f64,
-    pub reject: bool,
+    pub slope_db: i32,
+    /// 随机映射开关（中心/带宽两个色块）
+    pub swatch_on: [bool; 2],
+    pub swatch_color: [Color32; 2],
+    /// 频谱曲线：`(x 0..1, y 0..1)`，已按 3 dB/oct 与 256 段处理
+    pub spec_in: &'a [(f32, f32)],
+    pub spec_out: &'a [(f32, f32)],
 }
 
 #[derive(Default)]
@@ -66,8 +81,135 @@ pub struct PadEdit {
     pub freq: Option<f64>,
     pub bw_mult: Option<f64>,
     pub toggle_pass: bool,
+    pub slope: Option<i32>,
+    pub color_menu: Option<usize>,
     pub began: bool,
     pub ended: bool,
+}
+
+const PAD_CORNER_W: f32 = 170.0;
+const PAD_CORNER_H: f32 = 22.0;
+const PAD_TOP_PAD: f32 = 30.0;
+const PAD_SIDE_W: f32 = 24.0;
+const PAD_SIDE_X: f32 = 4.0;
+const PAD_SWATCH_GAP: f32 = 6.0;
+const PAD_SWATCH: f32 = 14.0;
+const LABEL_VALUE_GAP: f32 = 12.0;
+const PAD_PASS_GAP: f32 = 8.0;
+const PAD_PASS_PAD: f32 = 6.0;
+const HANDLE_R: f32 = 9.0;
+
+fn text_size(ui: &Ui, text: &str, font: egui::FontId) -> Vec2 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE)
+        .size()
+}
+
+fn draw_rotated(
+    painter: &egui::Painter,
+    center: Pos2,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    angle: f32,
+) {
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let size = galley.size();
+    // epaint 绕 `pos` 旋转；-90° 时文本盒占 [pos.x, pos.x+h] × [pos.y-w, pos.y]
+    let pos = Pos2::new(center.x - size.y * 0.5, center.y + size.x * 0.5);
+    let mut shape = egui::epaint::TextShape::new(pos, galley, color);
+    shape.angle = angle;
+    painter.add(shape);
+}
+
+/// 谱面渐变填充：逐列四边形 + 顶点色，等价于原版纵向线性渐变。
+fn fill_spectrum(
+    painter: &egui::Painter,
+    plot: Rect,
+    pts: &[(f32, f32)],
+    color: Color32,
+    top_alpha: u8,
+) {
+    if pts.len() < 2 {
+        return;
+    }
+    let mut mesh = egui::Mesh::default();
+    let base = plot.bottom() + 1.0;
+    let to_pos = |p: (f32, f32)| {
+        Pos2::new(
+            plot.left() + p.0.clamp(0.0, 1.0) * plot.width(),
+            plot.bottom() - p.1.clamp(0.0, 1.0) * plot.height(),
+        )
+    };
+
+    // 先做 Catmull-Rom → 三次贝塞尔采样，逼近原版 s=0.6 的曲线
+    let mut curve: Vec<Pos2> = Vec::with_capacity(pts.len() * 4);
+    if pts.len() > 3 {
+        let s = 0.6f32;
+        for i in 0..pts.len() - 1 {
+            let p0 = to_pos(pts[i.saturating_sub(1)]);
+            let p1 = to_pos(pts[i]);
+            let p2 = to_pos(pts[i + 1]);
+            let p3 = to_pos(pts[(i + 2).min(pts.len() - 1)]);
+            let c1 = p1 + (p2 - p0) * (s / 6.0);
+            let c2 = p2 - (p3 - p1) * (s / 6.0);
+            curve.push(p1);
+            for k in 1..4 {
+                let t = k as f32 / 4.0;
+                let inv = 1.0 - t;
+                let w0 = inv * inv * inv;
+                let w1 = 3.0 * inv * inv * t;
+                let w2 = 3.0 * inv * t * t;
+                let w3 = t * t * t;
+                let p = Pos2::new(
+                    p1.x * w0 + c1.x * w1 + c2.x * w2 + p2.x * w3,
+                    p1.y * w0 + c1.y * w1 + c2.y * w2 + p2.y * w3,
+                );
+                curve.push(p);
+            }
+        }
+    } else {
+        curve.extend(pts.iter().map(|&p| to_pos(p)));
+    }
+    curve.first_mut().map(|p| p.x = plot.left());
+    curve.last_mut().map(|p| p.x = plot.right());
+
+    let alpha_at = |y: f32| {
+        let t = ((y - plot.top()) / plot.height().max(1.0)).clamp(0.0, 1.0);
+        (top_alpha as f32 * (1.0 - t)) as u8
+    };
+    for w in curve.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if (b.x - a.x).abs() < 1e-4 {
+            continue;
+        }
+        let ca = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha_at(a.y));
+        let cb = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha_at(b.y));
+        let ia = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: a,
+            uv: egui::epaint::WHITE_UV,
+            color: ca,
+        });
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: Pos2::new(a.x, base),
+            uv: egui::epaint::WHITE_UV,
+            color: Color32::TRANSPARENT,
+        });
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: b,
+            uv: egui::epaint::WHITE_UV,
+            color: cb,
+        });
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: Pos2::new(b.x, base),
+            uv: egui::epaint::WHITE_UV,
+            color: Color32::TRANSPARENT,
+        });
+        mesh.indices
+            .extend_from_slice(&[ia, ia + 1, ia + 2, ia + 1, ia + 3, ia + 2]);
+    }
+    painter.add(Shape::mesh(mesh));
 }
 
 pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: Id) -> PadEdit {
@@ -76,39 +218,62 @@ pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: 
     p.rect_filled(rect, 0, theme.col_100());
 
     let plot = Rect::from_min_max(
-        Pos2::new(rect.left() + 8.0, rect.top() + 22.0),
-        Pos2::new(rect.right() - 8.0, rect.bottom() - 22.0),
+        Pos2::new(rect.left(), rect.top() + PAD_TOP_PAD),
+        Pos2::new(rect.right(), rect.bottom()),
     );
 
-    // 低端/高端的分段底色（原版 DrawTrack 的 zebra 条）
-    for (i, (lo, hi)) in [(20.0, 100.0), (100.0, 1000.0), (1000.0, 10_000.0), (10_000.0, 20_000.0)]
-        .iter()
-        .enumerate()
-    {
-        let x0 = freq_to_x(*lo, plot);
-        let x1 = freq_to_x(*hi, plot);
-        let gray = if i % 2 == 0 { 240 } else { 246 };
-        p.rect_filled(
-            Rect::from_min_max(Pos2::new(x0, plot.top()), Pos2::new(x1, plot.bottom())),
-            0,
-            theme.warm_gray(gray),
-        );
+    // zebra 底纹：每个十倍频程内按 1..9 细分，灰阶在同一段内线性过渡
+    let bands: [(f64, f64, f32, f32); 4] = [
+        (20.0, 100.0, 194.0, 218.0),
+        (100.0, 1000.0, 205.0, 229.0),
+        (1000.0, 10_000.0, 216.0, 240.0),
+        (10_000.0, 20_000.0, 227.0, 227.0),
+    ];
+    for (lo, hi, v0, v1) in bands {
+        let mut edges = vec![lo];
+        let mut decade = 1.0f64;
+        while decade <= 10_000.0 {
+            for m in 1..=9 {
+                let f = m as f64 * decade;
+                if f > lo && f < hi {
+                    edges.push(f);
+                }
+            }
+            decade *= 10.0;
+        }
+        edges.push(hi);
+        let xs: Vec<f32> = edges.iter().map(|&f| freq_to_x(f, plot)).collect();
+        let cells = xs.len().saturating_sub(1);
+        for i in 0..cells {
+            let t = if cells > 1 { i as f32 / (cells - 1) as f32 } else { 0.0 };
+            let v = (v0 + (v1 - v0) * t).round() as u8;
+            p.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(xs[i], plot.top()),
+                    Pos2::new(xs[i + 1], plot.bottom()),
+                ),
+                0,
+                theme.warm_gray(v),
+            );
+        }
     }
 
-    // 竖向八度线
-    let mut f = 20.0f64;
-    while f <= 20_000.0 {
+    // 频谱（位于网格之下，与原版叠加顺序一致）
+    if !model.spec_in.is_empty() {
+        fill_spectrum(&p, plot, model.spec_in, theme.col_500(), 110);
+    }
+    if !model.spec_out.is_empty() {
+        fill_spectrum(&p, plot, model.spec_out, theme.col_900(), 170);
+    }
+
+    // 网格：8 度线（整 kHz 加深）+ 横向带宽线
+    for f in [100.0f64, 1000.0, 10_000.0] {
         let x = freq_to_x(f, plot);
-        let strong = (f / 1000.0).log10().fract().abs() < 0.001;
-        let color = if strong { theme.warm_gray(212) } else { theme.warm_gray(228) };
         p.line_segment(
             [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
-            Stroke::new(1.0_f32, color),
+            Stroke::new(1.0_f32, theme.warm_gray(215)),
         );
-        f *= 2.0;
     }
-
-    // 横向带宽线
     for bw in [2.0f64, 4.0, 8.0, 16.0, 31.0] {
         let y = bw_to_y(bw, plot);
         p.line_segment(
@@ -117,11 +282,11 @@ pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: 
         );
     }
 
-    // 轴标签
+    // 轴标签：只保留原版的三处
     for (f, label) in [(100.0, "100"), (1000.0, "1k"), (10_000.0, "10k")] {
         p.text(
-            Pos2::new(freq_to_x(f, plot), plot.bottom() + 4.0),
-            Align2::CENTER_TOP,
+            Pos2::new(freq_to_x(f, plot), plot.bottom() - 2.0),
+            Align2::CENTER_BOTTOM,
             label,
             fonts::regular(10.0),
             theme.col_700(),
@@ -137,46 +302,189 @@ pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: 
         );
     }
 
-    // 标题与旁标
-    p.text(
-        Pos2::new(rect.left() + 8.0, rect.top() + 4.0),
-        Align2::LEFT_TOP,
-        model.label,
-        fonts::bold(11.0),
-        theme.col_500(),
-    );
+    // 侧标：40px Bold，绕中心旋转 -90°
+    if !model.side_label.is_empty() {
+        let side = Rect::from_min_max(
+            Pos2::new(rect.left() + PAD_SIDE_X, plot.top()),
+            Pos2::new(rect.left() + PAD_SIDE_W + PAD_SIDE_X, rect.bottom()),
+        );
+        let _ = &side;
+        let painter_full = ui.painter();
+        let galley = painter_full.layout_no_wrap(
+            model.side_label.to_owned(),
+            fonts::bold(32.0),
+            theme.col_700(),
+        );
+        let h = galley.size();
+        let mut shape = egui::epaint::TextShape::new(
+            Pos2::new(rect.left() + 3.0, side.center().y + h.x * 0.5),
+            galley,
+            theme.col_700(),
+        );
+        shape.angle = -PI * 0.5;
+        painter_full.add(shape);
+    }
 
-    // PASS / REJECT 胶囊
-    let chip = Rect::from_min_size(
-        Pos2::new(rect.right() - 66.0, rect.top() + 2.0),
-        Vec2::new(58.0, 18.0),
+    // 顶部角标：CENTER / WIDTH（20px SemiBold，色块 14×14）
+    let cy = rect.top() + PAD_CORNER_H * 0.5;
+    let corner_l = Rect::from_min_max(
+        Pos2::new(rect.left(), rect.top()),
+        Pos2::new(rect.left() + PAD_CORNER_W, rect.top() + PAD_CORNER_H),
     );
-    let chip_resp = ui.interact(chip, id.with("pass"), Sense::click());
-    let chip_bg = if model.reject {
-        theme.col_900()
-    } else {
-        theme.col_300()
+    let corner_r = Rect::from_min_max(
+        Pos2::new(rect.right() - PAD_CORNER_W, rect.top()),
+        Pos2::new(rect.right(), rect.top() + PAD_CORNER_H),
+    );
+    let font = fonts::semibold(20.0);
+    let center_value = format!("{:.0}Hz", model.freq);
+    let bw_value = format!("{:.2}", model.bw_mult);
+
+    // 左角：前缀 + 值 + 色块
+    let center_swatch = {
+        let prefix_w = text_size(ui, model.center_prefix, font.clone()).x;
+        let value_w = text_size(ui, &center_value, font.clone()).x;
+        let value_rect = Rect::from_min_max(
+            Pos2::new(corner_l.left() + prefix_w + LABEL_VALUE_GAP, corner_l.top()),
+            Pos2::new(
+                corner_l.left() + prefix_w + LABEL_VALUE_GAP + value_w,
+                corner_l.top() + PAD_CORNER_H,
+            ),
+        );
+        p.text(
+            Pos2::new(corner_l.left(), cy),
+            Align2::LEFT_CENTER,
+            model.center_prefix,
+            font.clone(),
+            theme.col_900(),
+        );
+        p.text(
+            Pos2::new(value_rect.left(), cy),
+            Align2::LEFT_CENTER,
+            &center_value,
+            font.clone(),
+            theme.col_900(),
+        );
+        let sw = Rect::from_min_size(
+            Pos2::new(value_rect.right() + PAD_SWATCH_GAP, cy - PAD_SWATCH * 0.5),
+            Vec2::splat(PAD_SWATCH),
+        );
+        let c = if model.swatch_on[0] {
+            model.swatch_color[0]
+        } else {
+            Theme::dim_color(model.swatch_color[0])
+        };
+        p.rect_filled(sw, 0, c);
+        (sw, value_rect)
     };
-    p.rect_filled(chip, 3, chip_bg);
-    if chip_resp.hovered() {
-        p.rect_filled(chip, 3, theme.hover_overlay());
-    }
-    p.text(
-        chip.center(),
-        Align2::CENTER_CENTER,
-        if model.reject { "REJECT" } else { "PASS" },
-        fonts::semibold(9.0),
-        if model.reject { theme.col_100() } else { theme.col_900() },
-    );
-    if chip_resp.clicked() {
-        edit.toggle_pass = true;
+
+    // 右角：色块右对齐，值左贴色块
+    let bw_swatch = {
+        let value_w = text_size(ui, &bw_value, font.clone()).x;
+        let sw = Rect::from_min_size(
+            Pos2::new(corner_r.right() - PAD_SWATCH, cy - PAD_SWATCH * 0.5),
+            Vec2::splat(PAD_SWATCH),
+        );
+        let value_rect = Rect::from_min_max(
+            Pos2::new(sw.left() - PAD_SWATCH_GAP - value_w, corner_r.top()),
+            Pos2::new(sw.left() - PAD_SWATCH_GAP, corner_r.top() + PAD_CORNER_H),
+        );
+        let c = if model.swatch_on[1] {
+            model.swatch_color[1]
+        } else {
+            Theme::dim_color(model.swatch_color[1])
+        };
+        p.rect_filled(sw, 0, c);
+        let prefix_right = value_rect.left() - LABEL_VALUE_GAP;
+        let prefix_w = text_size(ui, model.width_prefix, font.clone()).x;
+        p.text(
+            Pos2::new(prefix_right - prefix_w, cy),
+            Align2::LEFT_CENTER,
+            model.width_prefix,
+            font.clone(),
+            theme.col_900(),
+        );
+        p.text(
+            Pos2::new(value_rect.left(), cy),
+            Align2::LEFT_CENTER,
+            &bw_value,
+            font.clone(),
+            theme.col_900(),
+        );
+        (sw, value_rect)
+    };
+
+    // 色块交互：左键切换随机、右键选色
+    for (i, (sw, _)) in [center_swatch, bw_swatch].iter().enumerate() {
+        let resp = ui.interact(*sw, id.with(("swatch", i)), Sense::click());
+        if resp.clicked() || resp.secondary_clicked() {
+            edit.color_menu = Some(i);
+        }
     }
 
-    // 手柄（频率 × 带宽）
-    let hx = freq_to_x(model.freq, plot);
-    let hy = bw_to_y(model.bw_mult, plot);
-    let handle = Pos2::new(hx, hy);
-    let hit = Rect::from_center_size(handle, Vec2::splat(26.0));
+    // BP / BR 胶囊：宽度 = 文本宽 + 12，右缘贴 WIDTH 前缀左缘 - 8
+    {
+        let label_w = text_size(ui, model.pass_label, font.clone()).x;
+        let btn_w = label_w + PAD_PASS_PAD * 2.0;
+        let prefix_right = bw_swatch.1.left() - LABEL_VALUE_GAP;
+        let prefix_w = text_size(ui, model.width_prefix, font.clone()).x;
+        let btn = Rect::from_min_max(
+            Pos2::new(prefix_right - prefix_w - PAD_PASS_GAP - btn_w, rect.top()),
+            Pos2::new(prefix_right - prefix_w - PAD_PASS_GAP, rect.top() + PAD_CORNER_H),
+        );
+        let resp = ui.interact(btn, id.with("pass"), Sense::click());
+        let hover = resp.hovered();
+        let fill = if model.pass {
+            if hover { theme.col_500() } else { theme.col_300() }
+        } else {
+            theme.col_900()
+        };
+        p.rect_filled(btn.shrink(1.0), 0, fill);
+        p.text(
+            btn.center(),
+            Align2::CENTER_CENTER,
+            model.pass_label,
+            font.clone(),
+            if model.pass { theme.col_900() } else { theme.col_100() },
+        );
+        if resp.clicked() {
+            edit.toggle_pass = true;
+        }
+    }
+
+    // SLOPE：居中，前缀 + 值
+    {
+        let slope_value = format!("{} dB/oct", model.slope_db);
+        let w1 = text_size(ui, model.slope_prefix, font.clone()).x;
+        let w2 = text_size(ui, &slope_value, font.clone()).x;
+        let total = w1 + LABEL_VALUE_GAP + w2;
+        let x0 = rect.center().x - total * 0.5;
+        let r = Rect::from_min_max(
+            Pos2::new(x0, rect.top()),
+            Pos2::new(x0 + total, rect.top() + PAD_CORNER_H),
+        );
+        p.text(
+            Pos2::new(x0, cy),
+            Align2::LEFT_CENTER,
+            model.slope_prefix,
+            font.clone(),
+            theme.col_900(),
+        );
+        p.text(
+            Pos2::new(x0 + w1 + LABEL_VALUE_GAP, cy),
+            Align2::LEFT_CENTER,
+            &slope_value,
+            font.clone(),
+            theme.col_900(),
+        );
+        let resp = ui.interact(r, id.with("slope"), Sense::click());
+        if resp.clicked() {
+            edit.slope = Some(model.slope_db);
+        }
+    }
+
+    // 手柄
+    let handle = Pos2::new(freq_to_x(model.freq, plot), bw_to_y(model.bw_mult, plot));
+    let hit = Rect::from_center_size(handle, Vec2::splat(HANDLE_R * 2.0 + 8.0));
     let resp = ui.interact(hit, id.with("handle"), Sense::click_and_drag());
 
     if resp.hovered() || resp.dragged() {
@@ -208,9 +516,8 @@ pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: 
         }
     }
 
-    // 随机目标幽灵（仅提示，暂未接线）
-    p.circle_filled(handle, 9.0, theme.col_900());
-    p.circle_filled(handle, 2.5, theme.col_100());
+    p.circle_filled(handle, HANDLE_R, theme.col_900());
+    p.circle_filled(handle, HANDLE_R * 0.25, theme.col_100());
 
     edit
 }
@@ -258,15 +565,15 @@ pub fn band_slider(
     p.text(
         Pos2::new(rect.left() + 8.0, rect.top() + 2.0),
         Align2::LEFT_TOP,
-        format!("LOW CUT  {}", fmt_hz(lo)),
-        fonts::regular(10.0),
+        format!("低切  {}", fmt_hz_unit(lo)),
+        fonts::regular(13.0),
         theme.col_700(),
     );
     p.text(
         Pos2::new(rect.right() - 8.0, rect.top() + 2.0),
         Align2::RIGHT_TOP,
-        format!("HIGH CUT  {}", fmt_hz(hi)),
-        fonts::regular(10.0),
+        format!("高切  {}", fmt_hz_unit(hi)),
+        fonts::regular(13.0),
         theme.col_700(),
     );
 

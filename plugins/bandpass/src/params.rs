@@ -5,6 +5,31 @@
 
 use truce::prelude::*;
 
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
+/// 音频线程 → UI 线程的共享分析通道。
+/// 4 通道：干 L、干 R、湿 L、湿 R（与原版两路 STFT 的输入一致）。
+pub struct Analysis {
+    pub tap: Arc<AudioTap<f32>>,
+    pub sample_rate: AtomicU32,
+}
+
+impl Default for Analysis {
+    fn default() -> Self {
+        Self {
+            tap: Arc::new(AudioTap::new(32_768, 4)),
+            sample_rate: AtomicU32::new(48_000),
+        }
+    }
+}
+
+impl Analysis {
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate.load(Ordering::Relaxed) as f64
+    }
+}
+
 /// 斜率档：与原版 `{"12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct"}` 一致。
 #[derive(ParamEnum, Debug)]
 pub enum Slope {
@@ -193,6 +218,9 @@ pub struct BandPassParams {
     pub pass_l: BoolParam,
     #[param(id = 33, name = "Pass R", default = 1)]
     pub pass_r: BoolParam,
+    /// 仅供界面读取的频谱源与采样率，不参与状态序列化。
+    #[skip]
+    pub analysis: Arc<Analysis>,
 }
 
 impl BandPassParams {

@@ -17,6 +17,67 @@ use truce::prelude::*;
 use truce_egui::EditorUi;
 
 use crate::params::{BandPassParams, BandPassParamsParamId as P};
+use openrm_dsp::spectrum::{PadSpectrum, SPECTRUM_BANDS};
+
+const SPEC_FFT: usize = 4096;
+const SPEC_OVERLAP: usize = 4;
+const SPEC_HOP: usize = SPEC_FFT / SPEC_OVERLAP;
+
+/// UI 侧的频谱管线：音频线程把 4 通道帧推进 `AudioTap`，这里按 hop 取走做 STFT。
+struct SpectrumUi {
+    sr: f64,
+    l: PadSpectrum,
+    r: PadSpectrum,
+    pending: Vec<f32>,
+    curves_l: [Vec<(f32, f32)>; 2],
+    curves_r: [Vec<(f32, f32)>; 2],
+}
+
+impl SpectrumUi {
+    fn new(sr: f64) -> Self {
+        Self {
+            sr,
+            l: PadSpectrum::new(sr, SPEC_FFT, SPEC_OVERLAP),
+            r: PadSpectrum::new(sr, SPEC_FFT, SPEC_OVERLAP),
+            pending: Vec::with_capacity(SPEC_HOP * 8),
+            curves_l: [Vec::new(), Vec::new()],
+            curves_r: [Vec::new(), Vec::new()],
+        }
+    }
+
+    fn pump(&mut self, tap: &truce::core::audio_tap::AudioTap<f32>) {
+        let pending = &mut self.pending;
+        tap.drain_with(|frames| {
+            pending.extend_from_slice(frames);
+        });
+        while self.pending.len() >= SPEC_HOP * 4 {
+            let chunk: Vec<f32> = self.pending.drain(..SPEC_HOP * 4).collect();
+            let dry: Vec<f32> = chunk.chunks_exact(4).map(|f| f[0]).collect();
+            let wet_l: Vec<f32> = chunk.chunks_exact(4).map(|f| f[2]).collect();
+            let wet_r: Vec<f32> = chunk.chunks_exact(4).map(|f| f[3]).collect();
+            self.l.push_hop(&dry, &wet_l);
+            // 原版右垫的干信号取的是左声道（既有行为），此处保持复刻
+            self.r.push_hop(&dry, &wet_r);
+            for ch in 0..2 {
+                self.curves_l[ch] = self.l.curve(ch);
+                self.curves_r[ch] = self.r.curve(ch);
+            }
+            if std::env::var("ORM_SPEC_DEBUG").is_ok() {
+                let c = &self.curves_l[0];
+                let ymin = c.iter().map(|p| p.1).fold(f32::MAX, f32::min);
+                let ymax = c.iter().map(|p| p.1).fold(f32::MIN, f32::max);
+                eprintln!("spec hop: {} pts, y {}..{}", c.len(), ymin, ymax);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MenuKind {
+    Slope(bool),
+    Color(usize, bool),
+}
+
 
 const COL1_X: f32 = 740.0;
 const COL2_X: f32 = 824.0;
@@ -103,6 +164,8 @@ pub struct BandPassUi {
     selected_color: usize,
     active_slot: Option<usize>,
     morph_norm: f64,
+    spectrum: Option<SpectrumUi>,
+    menu: Option<(MenuKind, Pos2)>,
 }
 
 impl Default for BandPassUi {
@@ -114,6 +177,8 @@ impl Default for BandPassUi {
             selected_color: 0,
             active_slot: None,
             morph_norm: 0.0,
+            spectrum: None,
+            menu: None,
         }
     }
 }
@@ -282,6 +347,19 @@ impl EditorUi<BandPassParams> for BandPassUi {
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PluginContext<BandPassParams>) {
         self.ensure_style(ui);
 
+        // 频谱：采样率变了就重建分析器
+        let sr = ctx.params().analysis.sample_rate();
+        let need = self
+            .spectrum
+            .as_ref()
+            .map_or(true, |sp| (sp.sr - sr).abs() > 0.5);
+        if need {
+            self.spectrum = Some(SpectrumUi::new(sr));
+        }
+        if let Some(sp) = self.spectrum.as_mut() {
+            sp.pump(&ctx.params().analysis.tap);
+        }
+
         let p = ctx.params();
         let theme = self.theme;
 
@@ -321,11 +399,41 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 )
             };
 
+            let slope_db = [12, 24, 48, 96][p.slope_l.index().min(3) as usize];
+            let (swatch_a, swatch_b) = if is_l {
+                (
+                    p.random_color_freq_l.index(),
+                    p.random_color_bw_l.index(),
+                )
+            } else {
+                (
+                    p.random_color_freq_r.index(),
+                    p.random_color_bw_r.index(),
+                )
+            };
+            let spec = self.spectrum.as_ref();
+            let (sin, sout): (&[(f32, f32)], &[(f32, f32)]) = match (spec, is_l) {
+                (Some(sp), true) => (&sp.curves_l[0], &sp.curves_l[1]),
+                (Some(sp), false) => (&sp.curves_r[0], &sp.curves_r[1]),
+                (None, _) => (&[], &[]),
+            };
             let model = PadModel {
-                label: if is_l { "LEFT" } else { "RIGHT" },
+                center_prefix: "中心",
+                width_prefix: "宽度",
+                slope_prefix: "滚降",
+                pass_label: if pass { "带通" } else { "带阻" },
+                side_label: if is_l { "LEFT" } else { "RIGHT" },
+                pass,
                 freq,
                 bw_mult: bw,
-                reject,
+                slope_db,
+                swatch_on: [true, true],
+                swatch_color: [
+                    openrm_ui::theme::Theme::random_color(swatch_a as usize),
+                    openrm_ui::theme::Theme::random_color(swatch_b as usize),
+                ],
+                spec_in: sin,
+                spec_out: sout,
             };
             let edit = widgets::filter_pad(
                 ui,
@@ -334,6 +442,22 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 &theme,
                 Id::new(("pad", is_l)),
             );
+            if let Some(_db) = edit.slope {
+                self.menu = Some((
+                    MenuKind::Slope(is_l),
+                    ui.ctx()
+                        .pointer_latest_pos()
+                        .unwrap_or(pad_rect.left_top() + Vec2::new(200.0, 24.0)),
+                ));
+            }
+            if let Some(i) = edit.color_menu {
+                self.menu = Some((
+                    MenuKind::Color(i, is_l),
+                    ui.ctx()
+                        .pointer_latest_pos()
+                        .unwrap_or(pad_rect.left_top() + Vec2::new(100.0, 24.0)),
+                ));
+            }
             self.apply_pad(ctx, is_l, edit);
 
             let band = widgets::band_slider(
@@ -355,41 +479,16 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 ui,
                 gain_rect,
                 gain as f32,
-                if is_l { "GAIN L" } else { "GAIN R" },
+                if is_l { "增益 L" } else { "增益 R" },
                 &theme,
                 Id::new(("gain", is_l)),
             );
             self.apply_gain(ctx, is_l, ged);
 
-            let slope = if is_l { p.slope_l.value() } else { p.slope_r.value() };
-            painter.text(
-                Pos2::new(pad_rect.left() + 8.0, pad_rect.bottom() - 16.0),
-                egui::Align2::LEFT_BOTTOM,
-                format!("{} dB/oct", slope.db_per_oct() as i32),
-                fonts::regular(9.0),
-                theme.col_700(),
-            );
-
-            // 双击斜率文字循环档位
-            let slope_hit = rect(
-                pad_rect.left() + 4.0,
-                pad_rect.bottom() - 22.0,
-                pad_rect.left() + 84.0,
-                pad_rect.bottom() - 6.0,
-            );
-            if ui
-                .interact(slope_hit, Id::new(("slope", is_l)), Sense::click())
-                .clicked()
-            {
-                let next = (slope as u8 + 1) % 4;
-                let id = pid(if is_l { P::SlopeL } else { P::SlopeR });
-                ctx.bridge().set_param(id, next as f64 / 3.0);
-            }
-            let _ = pass;
         }
 
         // ---- 右栏：预设 ----
-        widgets::section_title(ui, rect(COL1_X, 30.0, PANEL_R, 52.0), "PRESETS", &theme);
+        widgets::section_title(ui, rect(COL1_X, 30.0, PANEL_R, 52.0), "预设", &theme);
 
         for r in 0..4 {
             for c in 0..4 {
@@ -419,7 +518,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         let morph = widgets::hbar(
             ui,
             rect(COL1_X, 188.0, PANEL_R, 230.0),
-            "MORPH",
+            "渐变",
             &morph_text,
             self.morph_norm,
             &theme,
@@ -430,31 +529,15 @@ impl EditorUi<BandPassParams> for BandPassUi {
         }
 
         // RANDOM
-        widgets::section_title(ui, rect(COL1_X, 234.0, PANEL_R, 260.0), "RANDOM", &theme);
+        widgets::section_title(ui, rect(COL1_X, 234.0, PANEL_R, 260.0), "随机", &theme);
 
-        for c in 0..4 {
-            let x = COL1_X + c as f32 * CELL_STEP_X;
-            let r = rect(x, 266.0, x + CELL_W, 286.0);
-            let resp = ui.interact(r, Id::new(("swatch", c)), Sense::click());
-            painter.rect_filled(
-                r,
-                2,
-                if self.selected_color == c {
-                    Theme::random_color(c)
-                } else {
-                    Theme::random_color_dim(c)
-                },
-            );
-            if self.selected_color == c {
-                painter.rect_stroke(
-                    r,
-                    2,
-                    egui::Stroke::new(1.5_f32, theme.col_900()),
-                    egui::StrokeKind::Inside,
-                );
-            }
+        // 随机标题右侧的当前色块（点击切换要编辑的颜色，原版用弹出菜单）
+        {
+            let r = rect(PANEL_R - 14.0, 234.0, PANEL_R, 248.0);
+            let resp = ui.interact(r, Id::new("random_color"), Sense::click());
+            painter.rect_filled(r, 0, Theme::random_color(self.selected_color));
             if resp.clicked() {
-                self.selected_color = c;
+                self.selected_color = (self.selected_color + 1) % 4;
             }
         }
 
@@ -472,10 +555,15 @@ impl EditorUi<BandPassParams> for BandPassUi {
             _ => p.random_rate_g.raw_target(),
         };
 
+        painter.rect_filled(
+            rect(PANEL_R - 14.0, 292.0, PANEL_R, 306.0),
+            0,
+            Theme::random_color(self.selected_color),
+        );
         let range = widgets::hbar(
             ui,
-            rect(COL1_X, 292.0, PANEL_R, 322.0),
-            "RANGE",
+            rect(COL1_X, 292.0, PANEL_R - 18.0, 322.0),
+            "范围",
             &format!("{:.2}", amount),
             amount,
             &theme,
@@ -492,10 +580,15 @@ impl EditorUi<BandPassParams> for BandPassUi {
         }
 
         let speed_norm = (rate / 0.01).ln() / 6000f64.ln();
+        painter.rect_filled(
+            rect(PANEL_R - 14.0, 326.0, PANEL_R, 340.0),
+            0,
+            Theme::random_color(self.selected_color),
+        );
         let speed = widgets::hbar(
             ui,
-            rect(COL1_X, 326.0, PANEL_R, 356.0),
-            "SPEED",
+            rect(COL1_X, 326.0, PANEL_R - 18.0, 356.0),
+            "速度",
             &format!("{:.2}s", rate),
             speed_norm,
             &theme,
@@ -517,7 +610,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if widgets::flat_button(
             ui,
             rect(COL1_X, 360.0, COL1_X + 76.0, 388.0),
-            "L->R",
+            "左→右",
             false,
             &theme,
             Id::new("copy_lr"),
@@ -527,7 +620,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if widgets::flat_button(
             ui,
             rect(COL2_X + 4.0, 360.0, PANEL_R, 388.0),
-            "R->L",
+            "右→左",
             false,
             &theme,
             Id::new("copy_rl"),
@@ -538,7 +631,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if widgets::flat_button(
             ui,
             rect(COL1_X, 392.0, COL1_X + 76.0, 420.0),
-            "LINK",
+            "同步",
             p.link.value(),
             &theme,
             Id::new("link"),
@@ -548,7 +641,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if widgets::flat_button(
             ui,
             rect(COL2_X + 4.0, 392.0, PANEL_R, 420.0),
-            "FLIP",
+            "翻转",
             false,
             &theme,
             Id::new("flip"),
@@ -561,7 +654,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         let mix_edit = widgets::hbar(
             ui,
             rect(COL1_X, 424.0, PANEL_R, 466.0),
-            "MIX",
+            "混合",
             &format!("{:.0}%", mix * 100.0),
             mix,
             &theme,
@@ -596,7 +689,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         let fade = widgets::hbar(
             ui,
             rect(20.0, 592.0, 668.0, 616.0),
-            "MORPH TIME",
+            "渐变时间",
             &morph_text,
             self.morph_norm,
             &theme,
@@ -622,6 +715,74 @@ impl EditorUi<BandPassParams> for BandPassUi {
         );
 
         // 旁标：单声道提示位（与 C++ 的 mMonoDisplay 对应）
+
+        // ---- 弹出菜单（斜率 / 随机色板）----
+        if let Some((kind, pos)) = self.menu.take() {
+            let mut keep = true;
+            egui::Area::new(Id::new("orm_popup"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(132.0);
+                        match kind {
+                            MenuKind::Slope(is_l) => {
+                                let id = pid(if is_l { P::SlopeL } else { P::SlopeR });
+                                let cur = if is_l {
+                                    p.slope_l.index()
+                                } else {
+                                    p.slope_r.index()
+                                };
+                                for (i, db) in [12, 24, 48, 96].iter().enumerate() {
+                                    let label = if i as u32 == cur {
+                                        format!("✓ {db} dB/oct")
+                                    } else {
+                                        format!("{db} dB/oct")
+                                    };
+                                    if ui.button(label).clicked() {
+                                        ctx.automate(id, i as f64 / 3.0);
+                                        keep = false;
+                                    }
+                                }
+                            }
+                            MenuKind::Color(i, is_l) => {
+                                let id = pid(match (i, is_l) {
+                                    (0, true) => P::RandomColorFreqL,
+                                    (1, true) => P::RandomColorBwL,
+                                    (0, false) => P::RandomColorFreqR,
+                                    _ => P::RandomColorBwR,
+                                });
+                                for c in 0..4 {
+                                    let color = openrm_ui::theme::Theme::random_color(c);
+                                    if ui
+                                        .add(
+                                            egui::Button::new("      ")
+                                                .fill(color)
+                                                .min_size(Vec2::new(120.0, 24.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        ctx.automate(id, c as f64 / 3.0);
+                                        keep = false;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+            if ui.ctx().input(|i| i.pointer.any_click()) && keep {
+                // 点击别处关闭：仅当点在菜单外
+                if let Some(pp) = ui.ctx().pointer_interact_pos() {
+                    if !Rect::from_min_size(pos, Vec2::new(140.0, 24.0)).contains(pp) {
+                        keep = false;
+                    }
+                }
+            }
+            if keep {
+                self.menu = Some((kind, pos));
+            }
+        }
+
     }
 
     fn state_changed(&mut self, _ctx: &PluginContext<BandPassParams>) {

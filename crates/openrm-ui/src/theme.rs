@@ -123,6 +123,10 @@ impl Theme {
         COLORS[idx.min(3)]
     }
 
+    pub fn dim_color(c: Color32) -> Color32 {
+        Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 90)
+    }
+
     pub fn random_color_dim(idx: usize) -> Color32 {
         let c = Self::random_color(idx);
         Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 90)

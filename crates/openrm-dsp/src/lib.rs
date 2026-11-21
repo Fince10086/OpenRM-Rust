@@ -9,6 +9,7 @@
 pub mod bandpass;
 pub mod response;
 pub mod random_walk;
+pub mod spectrum;
 pub mod svf;
 
 pub use bandpass::{BandPassCore, Params, RandomDeltas};

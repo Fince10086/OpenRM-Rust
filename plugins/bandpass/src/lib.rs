@@ -28,6 +28,9 @@ pub struct BandPassDsp {
     in_r: Vec<f32>,
     out_l: Vec<f32>,
     out_r: Vec<f32>,
+    wet_l: Vec<f32>,
+    wet_r: Vec<f32>,
+    tap: Option<Arc<truce::core::audio_tap::AudioTap<f32>>>,
 }
 
 impl Default for BandPassDsp {
@@ -38,6 +41,9 @@ impl Default for BandPassDsp {
             in_r: Vec::new(),
             out_l: Vec::new(),
             out_r: Vec::new(),
+            wet_l: Vec::new(),
+            wet_r: Vec::new(),
+            tap: None,
         }
     }
 }
@@ -46,19 +52,27 @@ impl PluginLogic for BandPass {
     type Params = BandPassParams;
     type DspState = BandPassDsp;
 
-    fn init(_params: &BandPassParams, _cx: &InitContext) -> BandPassDsp {
+    fn init(params: &BandPassParams, _cx: &InitContext) -> BandPassDsp {
         // 采样率在 reset() 才确定，这里只建空状态。
-        BandPassDsp::default()
+        let mut state = BandPassDsp::default();
+        state.tap = Some(Arc::clone(&params.analysis.tap));
+        state
     }
 
-    fn reset(state: &mut BandPassDsp, _params: &BandPassParams, config: &AudioConfig) {
+    fn reset(state: &mut BandPassDsp, params: &BandPassParams, config: &AudioConfig) {
         state.core.prepare(config.sample_rate);
+        params
+            .analysis
+            .sample_rate
+            .store(config.sample_rate.round() as u32, std::sync::atomic::Ordering::Relaxed);
         let max_block = config.max_block_size.max(1);
         for buf in [
             &mut state.in_l,
             &mut state.in_r,
             &mut state.out_l,
             &mut state.out_r,
+            &mut state.wet_l,
+            &mut state.wet_r,
         ] {
             buf.clear();
             buf.resize(max_block, 0.0);
@@ -92,10 +106,25 @@ impl PluginLogic for BandPass {
             &state.in_r[..n],
             &mut state.out_l[..n],
             &mut state.out_r[..n],
-            None,
-            None,
+            Some(&mut state.wet_l[..n]),
+            Some(&mut state.wet_r[..n]),
             n,
         );
+
+        // 频谱源：干/湿各两路，按帧交织后推给 UI（UI 侧做 STFT）。
+        if let Some(tap) = &state.tap {
+            let frames: Vec<[f32; 4]> = (0..n)
+                .map(|i| {
+                    [
+                        state.in_l[i],
+                        state.in_r[i],
+                        state.wet_l[i],
+                        state.wet_r[i],
+                    ]
+                })
+                .collect();
+            tap.push_frames(&frames.concat());
+        }
 
         let out0 = &state.out_l[..n];
         let out1 = &state.out_r[..n];

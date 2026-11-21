@@ -17,6 +17,8 @@ egui = "=0.34.3"
 truce-clap = { version = "6.3.0", optional = true }
 truce-vst3 = { version = "6.3.0", optional = true }
 clap-sys = { version = "0.5", optional = true }
+serde_json = "1"
+rfd = "0.15"
 
 [features]
 default = ["clap", "vst3"]
@@ -26,3 +28,6 @@ vst3 = ["truce/vst3", "dep:truce-vst3"]
 [dev-dependencies]
 truce-test = "6.3.0"
 png = "0.17"
+egui-wgpu = { version = "=0.34.3", default-features = false }
+wgpu = { version = "=29.0.4", default-features = false, features = ["wgsl"] }
+pollster = "0.4"

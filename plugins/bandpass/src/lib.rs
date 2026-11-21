@@ -18,7 +18,6 @@ pub mod params;
 
 pub use params::{BandPassParams, RandomColor, Slope};
 
-
 /// 插件描述符（零大小）。实例状态在 `BandPassDsp`。
 pub struct BandPass;
 
@@ -61,10 +60,10 @@ impl PluginLogic for BandPass {
 
     fn reset(state: &mut BandPassDsp, params: &BandPassParams, config: &AudioConfig) {
         state.core.prepare(config.sample_rate);
-        params
-            .analysis
-            .sample_rate
-            .store(config.sample_rate.round() as u32, std::sync::atomic::Ordering::Relaxed);
+        params.analysis.sample_rate.store(
+            config.sample_rate.round() as u32,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let max_block = config.max_block_size.max(1);
         for buf in [
             &mut state.in_l,
@@ -111,17 +110,14 @@ impl PluginLogic for BandPass {
             n,
         );
 
+        params
+            .analysis
+            .store_deltas(state.core.random_deltas(), nch as u32);
+
         // 频谱源：干/湿各两路，按帧交织后推给 UI（UI 侧做 STFT）。
         if let Some(tap) = &state.tap {
             let frames: Vec<[f32; 4]> = (0..n)
-                .map(|i| {
-                    [
-                        state.in_l[i],
-                        state.in_r[i],
-                        state.wet_l[i],
-                        state.wet_r[i],
-                    ]
-                })
+                .map(|i| [state.in_l[i], state.in_r[i], state.wet_l[i], state.wet_r[i]])
                 .collect();
             tap.push_frames(&frames.concat());
         }

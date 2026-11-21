@@ -13,6 +13,10 @@ use std::sync::Arc;
 pub struct Analysis {
     pub tap: Arc<AudioTap<f32>>,
     pub sample_rate: AtomicU32,
+    /// 随机调制瞬时值（f32 bits）：频率 2、带宽 2、增益 2、混合 1。
+    deltas: [AtomicU32; 7],
+    /// 实际输出声道数（1 = 单声道，用于 MONO 显示态）。
+    pub n_out: AtomicU32,
 }
 
 impl Default for Analysis {
@@ -20,6 +24,8 @@ impl Default for Analysis {
         Self {
             tap: Arc::new(AudioTap::new(32_768, 4)),
             sample_rate: AtomicU32::new(48_000),
+            deltas: Default::default(),
+            n_out: AtomicU32::new(2),
         }
     }
 }
@@ -27,6 +33,36 @@ impl Default for Analysis {
 impl Analysis {
     pub fn sample_rate(&self) -> f64 {
         self.sample_rate.load(Ordering::Relaxed) as f64
+    }
+
+    pub fn store_deltas(&self, d: openrm_dsp::bandpass::RandomDeltas, n_out: u32) {
+        let vals = [
+            d.freq_oct[0],
+            d.bw_oct[0],
+            d.gain_db[0],
+            d.freq_oct[1],
+            d.bw_oct[1],
+            d.gain_db[1],
+            d.mix,
+        ];
+        for (slot, v) in self.deltas.iter().zip(vals) {
+            slot.store(v.to_bits(), Ordering::Relaxed);
+        }
+        self.n_out.store(n_out, Ordering::Relaxed);
+    }
+
+    pub fn deltas(&self) -> openrm_dsp::bandpass::RandomDeltas {
+        let f = |i: usize| f32::from_bits(self.deltas[i].load(Ordering::Relaxed));
+        openrm_dsp::bandpass::RandomDeltas {
+            freq_oct: [f(0), f(3)],
+            bw_oct: [f(1), f(4)],
+            gain_db: [f(2), f(5)],
+            mix: f(6),
+        }
+    }
+
+    pub fn n_out(&self) -> u32 {
+        self.n_out.load(Ordering::Relaxed)
     }
 }
 

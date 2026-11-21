@@ -5,6 +5,7 @@
 //! 这样宿主自动化手势的边界只有一处。
 
 pub mod fonts;
+pub mod strings;
 pub mod theme;
 pub mod widgets;
 

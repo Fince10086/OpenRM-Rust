@@ -15,8 +15,8 @@ pub const FAMILY_REGULAR: &str = "Mixed";
 pub const FAMILY_SEMI_BOLD: &str = "Mixed-SemiBold";
 pub const FAMILY_BOLD: &str = "Mixed-Bold";
 
-/// 把三档字重装进 egui，并保留 egui 自带字体做兜底（箭头、符号等）。
-pub fn install(ctx: &egui::Context) {
+/// 构造包含三档字重的字体定义（供截图/离线渲染在 `Context::run` 前预装）。
+pub fn definitions() -> FontDefinitions {
     let mut defs = FontDefinitions::default();
 
     for (name, data) in [
@@ -24,7 +24,8 @@ pub fn install(ctx: &egui::Context) {
         ("mixed-semibold", SEMI_BOLD),
         ("mixed-bold", BOLD),
     ] {
-        defs.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(data)));
+        defs.font_data
+            .insert(name.to_owned(), Arc::new(FontData::from_static(data)));
     }
 
     // 默认（Regular）作为正文字体，放在 Proportional 家族首位。
@@ -40,7 +41,12 @@ pub fn install(ctx: &egui::Context) {
         vec!["mixed-bold".to_owned(), "mixed-semibold".to_owned()],
     );
 
-    ctx.set_fonts(defs);
+    defs
+}
+
+/// 把三档字重装进 egui，并保留 egui 自带字体做兜底（箭头、符号等）。
+pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(definitions());
 }
 
 /// 首帧的字体集在 `ui()` 里才装上，egui 要到下一帧才把命名字体族生效。
@@ -60,22 +66,27 @@ fn has(name: &str) -> bool {
     true
 }
 
+/// iPlug2 的 IText 字号是「像素」，在 macOS 上按 72dpi → pt 的换算落到
+/// 0.8 倍；egui 的 FontId 直接是逻辑像素，因此统一乘这个系数才能与原版
+/// 的字宽、行高对齐。
+const TEXT_SCALE: f32 = 0.8;
+
 pub fn regular(size: f32) -> egui::FontId {
-    egui::FontId::new(size, FontFamily::Proportional)
+    egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
 }
 
 pub fn semibold(size: f32) -> egui::FontId {
     if has(FAMILY_SEMI_BOLD) {
-        egui::FontId::new(size, FontFamily::Name(FAMILY_SEMI_BOLD.into()))
+        egui::FontId::new(size * TEXT_SCALE, FontFamily::Name(FAMILY_SEMI_BOLD.into()))
     } else {
-        egui::FontId::new(size, FontFamily::Proportional)
+        egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
     }
 }
 
 pub fn bold(size: f32) -> egui::FontId {
     if has(FAMILY_BOLD) {
-        egui::FontId::new(size, FontFamily::Name(FAMILY_BOLD.into()))
+        egui::FontId::new(size * TEXT_SCALE, FontFamily::Name(FAMILY_BOLD.into()))
     } else {
-        egui::FontId::new(size, FontFamily::Proportional)
+        egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
     }
 }

@@ -961,7 +961,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
         }
 
         // ================= 右侧面板 =================
-        // PRESETS 标题 + 分隔线
+        // PRESETS 标题
         {
             let pnt = ui.painter_at(full);
             let font = fonts::bold(20.0);
@@ -971,14 +971,6 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 tr(Key::Presets),
                 font.clone(),
                 theme.col_900(),
-            );
-            let w = pnt
-                .layout_no_wrap(tr(Key::Presets).into(), font, theme.col_900())
-                .size()
-                .x;
-            pnt.line_segment(
-                [Pos2::new(COL1_X + w + 10.0, 41.0), Pos2::new(PANEL_R, 41.0)],
-                theme.hairline(),
             );
         }
 
@@ -1493,20 +1485,25 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 .order(egui::Order::Foreground)
                 .fixed_pos(ti.rect.left_top())
                 .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        let r = ui.add(
-                            egui::TextEdit::singleline(&mut buf)
-                                .desired_width(ti.rect.width().max(80.0))
-                                .font(egui::FontId::proportional(18.0)),
-                        );
-                        r.request_focus();
-                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            commit = true;
-                        }
-                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            cancel = true;
-                        }
-                    });
+                    egui::Frame::new()
+                        .fill(theme.col_100())
+                        .inner_margin(egui::Margin::symmetric(2, 1))
+                        .show(ui, |ui| {
+                            ui.set_min_size(ti.rect.size());
+                            let r = ui.add_sized(
+                                ti.rect.size(),
+                                egui::TextEdit::singleline(&mut buf)
+                                    .font(egui::FontId::proportional(16.0))
+                                    .horizontal_align(egui::Align::Center),
+                            );
+                            r.request_focus();
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                commit = true;
+                            }
+                            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                cancel = true;
+                            }
+                        });
                 });
             if commit {
                 let v: f64 = parse_number(&buf).unwrap_or(f64::NAN);

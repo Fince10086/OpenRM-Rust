@@ -1028,21 +1028,12 @@ pub fn hbar(ui: &mut Ui, rect: Rect, m: &BarModel, theme: &Theme, id: Id) -> Bar
 pub fn section_title(ui: &mut Ui, rect: Rect, text: &str, theme: &Theme) {
     let p = ui.painter_at(rect);
     let font = fonts::bold(TEXT_SIZE);
-    let w = label_value(ui, &p, text, font.clone(), theme.col_900());
     p.text(
         Pos2::new(rect.left(), rect.center().y),
         Align2::LEFT_CENTER,
         text,
         font,
         theme.col_900(),
-    );
-    let y = rect.center().y;
-    p.line_segment(
-        [
-            Pos2::new(rect.left() + w + 10.0, y),
-            Pos2::new(rect.right(), y),
-        ],
-        theme.hairline(),
     );
 }
 

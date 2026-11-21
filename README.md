@@ -9,7 +9,7 @@ ORM 系列音频插件的 Rust 重写仓库，插件框架用 [truce](https://tr
 
 | 插件 | 状态 | 说明 |
 |---|---|---|
-| BandPass | 移植中（DSP 已完成并验证） | 首个打通全链路的插件 |
+| BandPass | 移植中（DSP 已验证，egui 界面骨架完成） | 首个打通全链路的插件 |
 | Analyzer | 计划中 | 4 套分析引擎 + 电平/响度/声场显示，体量最大 |
 | CombFilter | 暂不迁移 | C++ 版本为半成品，等重做时直接用 Rust 写 |
 | Narrator | 不在范围内 | TTS 引擎与 ROM 数据继续留在 C++ 仓库 |
@@ -21,6 +21,7 @@ OpenRM-Rust/
 ├─ Cargo.toml               workspace
 ├─ truce.toml               truce 的插件清单（vendor + [[plugin]]）
 ├─ crates/
+│  ├─ openrm-ui/            egui 主题 / 字体 / 自绘控件（滤波垫、滑杆、按钮）
 │  └─ openrm-dsp/           纯 Rust DSP 核心，零框架依赖，可离线测试
 │     ├─ src/svf.rs         TPT 状态变量滤波器（对应 common/dsp/SvfFilter.h）
 │     ├─ src/random_walk.rs 平滑随机游走（对应 common/dsp/RandomWalk.h）
@@ -40,6 +41,7 @@ cargo test                     # DSP 回归 + 插件端到端冒烟
 cargo test -p orm-bandpass --no-default-features   # 只跑逻辑，不编译格式封装
 
 cargo install cargo-truce      # 一次性
+cargo run -p orm-bandpass --example shot   # 渲染一张界面截图（target/bandpass-ui.png）
 cargo truce run                # 独立运行，不需要 DAW
 cargo truce install --clap     # 装到 ~/Library/Audio/Plug-Ins/CLAP
 cargo truce install --vst3     # 装到 ~/Library/Audio/Plug-Ins/VST3
@@ -58,5 +60,9 @@ cargo truce install --vst3     # 装到 ~/Library/Audio/Plug-Ins/VST3
 | Reset 后随机游走最大偏移 | 4.728 oct | 4.728 oct |
 
 差异只剩 f32 累加顺序与 FMA 收缩带来的末位噪声（-97.5 vs -97.4 dB）。
+
+界面已切到 egui（`openrm-ui` + `truce-egui`），当前骨架包含滤波垫、带宽滑杆、
+增益条、预设槽、随机映射区与混音控件，见 `docs/screenshots/bandpass-m2.png`。
+频谱显示与预设文件读写尚未接入。
 
 进一步的工作计划见 `docs/rust-port-plan.md`。

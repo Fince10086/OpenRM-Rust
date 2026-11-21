@@ -7,6 +7,7 @@
 //! 移植基线：C++ 版 `tests/dsp_test.cpp` 的全部断言，见 `tests/bandpass_parity.rs`。
 
 pub mod bandpass;
+pub mod response;
 pub mod random_walk;
 pub mod svf;
 

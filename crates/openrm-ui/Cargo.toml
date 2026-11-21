@@ -1,0 +1,10 @@
+[package]
+name = "openrm-ui"
+description = "OpenRM 共用 egui 主题与自绘控件"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui = "=0.34.3"
+openrm-dsp = { path = "../openrm-dsp" }

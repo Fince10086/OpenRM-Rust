@@ -13,11 +13,11 @@ use std::sync::Arc;
 use openrm_dsp::bandpass::BandPassCore;
 use truce::prelude::*;
 
+pub mod editor;
 pub mod params;
 
 pub use params::{BandPassParams, RandomColor, Slope};
 
-use crate::params::BandPassParamsParamId as P;
 
 /// 插件描述符（零大小）。实例状态在 `BandPassDsp`。
 pub struct BandPass;
@@ -108,65 +108,7 @@ impl PluginLogic for BandPass {
     }
 
     fn editor(params: Arc<BandPassParams>) -> Box<dyn Editor> {
-        use truce_gui::IntoLayoutEditor;
-        use truce_gui_types::layout::{dropdown, knob, section, slider, toggle, GridLayout};
-
-        // 里程碑 1 的临时界面：把 34 个参数完整暴露出来，确认接线正确。
-        // 正式界面（滤波节点垫 / 频谱 / 预设槽）需要 egui 自绘，见计划文档。
-        GridLayout::build(vec![
-            section(
-                "FILTER L",
-                vec![
-                    knob(P::FreqL, "Freq").cols(2),
-                    knob(P::BwL, "BW"),
-                    knob(P::GainL, "Gain"),
-                    dropdown(P::SlopeL, "Slope"),
-                    toggle(P::PassL, "Pass"),
-                ],
-            ),
-            section(
-                "FILTER R",
-                vec![
-                    knob(P::FreqR, "Freq").cols(2),
-                    knob(P::BwR, "BW"),
-                    knob(P::GainR, "Gain"),
-                    dropdown(P::SlopeR, "Slope"),
-                    toggle(P::PassR, "Pass"),
-                ],
-            ),
-            section(
-                "MIX",
-                vec![toggle(P::Link, "Link"), slider(P::Mix, "Mix").cols(2)],
-            ),
-            section(
-                "RANDOM",
-                vec![
-                    knob(P::RandomAmountR, "Red Amt"),
-                    knob(P::RandomRateR, "Red Speed"),
-                    knob(P::RandomAmountY, "Yel Amt"),
-                    knob(P::RandomRateY, "Yel Speed"),
-                    knob(P::RandomAmountB, "Blu Amt"),
-                    knob(P::RandomRateB, "Blu Speed"),
-                    knob(P::RandomAmountG, "Grn Amt"),
-                    knob(P::RandomRateG, "Grn Speed"),
-                ],
-            ),
-            section(
-                "RANDOM TARGETS",
-                vec![
-                    toggle(P::RandomEnableFreqL, "F L"),
-                    toggle(P::RandomEnableBwL, "BW L"),
-                    toggle(P::RandomEnableGainL, "G L"),
-                    toggle(P::RandomEnableFreqR, "F R"),
-                    toggle(P::RandomEnableBwR, "BW R"),
-                    toggle(P::RandomEnableGainR, "G R"),
-                    toggle(P::RandomEnableMix, "Mix"),
-                ],
-            ),
-        ])
-        .with_title("ORM BandPass")
-        .with_subtitle("Rust / truce")
-        .into_editor(&params)
+        editor::create(params)
     }
 }
 

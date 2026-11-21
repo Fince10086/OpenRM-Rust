@@ -469,3 +469,33 @@ fn unlinked_slopes_stay_independent_then_link_overrides() {
         "LINK 开时 R 的斜率应跟随 L"
     );
 }
+
+#[test]
+fn analytic_response_matches_filter_shape() {
+    use openrm_dsp::response::{magnitude, magnitude_db};
+
+    let fs = 48000.0;
+    let center = 1000.0;
+    let bw = 1.0;
+    let slope = 96.0;
+
+    let m_center = magnitude(center, bw, slope, false, center, fs);
+    let db_center = 20.0 * m_center.log10();
+    println!("响应：中心 {db_center:.2} dB");
+    assert!((db_center).abs() < 0.6);
+
+    let m_high = magnitude(center, bw, slope, false, center * 2f64.powf(0.5), fs);
+    let db_high = 20.0 * m_high.log10();
+    println!("响应：上截止 {db_high:.2} dB");
+    assert!((db_high + 3.01).abs() < 0.6);
+
+    let db_out = magnitude_db(center, bw, slope, false, 1.0, center * 4.0, fs);
+    println!("响应：上截止 1 oct 外 {db_out:.1} dB");
+    assert!(db_out < -80.0);
+
+    // 带阻是 LP 级联 + HP 级联并联相加，8 节时两条路径相位不完全抵消，
+    // 槽底实测 -59.5 dB（与 BandPassCore 实测一致），不是理想的 -inf。
+    let r = magnitude(center, bw, slope, true, center, fs);
+    println!("带阻：中心 {:.2}", 20.0 * r.log10());
+    assert!(20.0 * r.log10() < -50.0);
+}

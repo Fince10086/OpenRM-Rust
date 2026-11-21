@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/openrm-dsp", "crates/openrm-ui", "plugins/bandpass"]
+members = [
+    "crates/openrm-dsp",
+    "crates/openrm-ui",
+    "crates/openrm-analyzer-dsp",
+    "plugins/bandpass",
+    "plugins/analyzer",
+]
 
 [workspace.package]
 version = "0.6.0"

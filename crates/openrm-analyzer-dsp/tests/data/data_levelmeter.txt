@@ -1,0 +1,7 @@
+# LevelMeter golden snapshots (sr=48000, block=512), exported from LevelMeter.h
+A peakL=-6.0206 peakR=-6.0206 trueL=-120 trueR=-120 rmsL=-9.0309 rmsR=-9.0309 vuL=-9.04173 vuR=-9.04173 vuHoldL=-9.04173 vuHoldR=-9.04173 persistL=-120 persistR=-120 holdL=-6.0206 holdR=-6.0206 holdSec=2 overL=0 overR=0
+B peakL=-4.41637 peakR=-4.41637 trueL=-120 trueR=-120 rmsL=-109.861 rmsR=-109.861 vuL=-41.307 vuR=-41.307 vuHoldL=-2.02254 vuHoldR=-2.02254 persistL=-120 persistR=-120 holdL=1.58363 holdR=1.58363 holdSec=2 overL=1 overR=1
+C peakL=-6.0206 peakR=-6.0206 trueL=-6.02178 trueR=-6.02178 rmsL=-120 rmsR=-120 vuL=-9.04173 vuR=-9.04173 vuHoldL=-9.04173 vuHoldR=-9.04173 persistL=-120 persistR=-120 holdL=-6.02178 holdR=-6.02178 holdSec=2 overL=0 overR=0
+D peakL=-5.17213 peakR=-5.17213 trueL=-5.1734 trueR=-5.1734 rmsL=-120 rmsR=-120 vuL=-42.0628 vuR=-42.0628 vuHoldL=-2.78599 vuHoldR=-2.78599 persistL=0.826598 persistR=0.826598 holdL=0.826598 holdR=0.826598 holdSec=2 overL=1 overR=1
+E peakL=-66.0206 peakR=-66.0206 trueL=-120 trueR=-120 rmsL=-120 rmsR=-120 vuL=-120 vuR=-120 vuHoldL=-59.2283 vuHoldR=-59.2283 persistL=-120 persistR=-120 holdL=-65.8072 holdR=-65.8072 holdSec=0.5 overL=0 overR=0
+F peakL=-120 peakR=-120 trueL=-120 trueR=-120 rmsL=-120 rmsR=-120 vuL=-120 vuR=-120 vuHoldL=-120 vuHoldR=-120 persistL=-120 persistR=-120 holdL=-120 holdR=-120 holdSec=0 overL=0 overR=0

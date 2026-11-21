@@ -2,3 +2,13 @@
 .DS_Store
 *.pluginstate
 target/screenshots
+
+# 用户自有设计稿，不属于本次移植
+/design/
+
+# 原版截图的临时抓图
+docs/screenshots/analyzer-original/_scratch_*.png
+
+# 像素 diff 中间产物：仅保留最终静态掩码口径 analyzer-m1-static/
+docs/screenshots/diff/*
+!docs/screenshots/diff/analyzer-m1-static/

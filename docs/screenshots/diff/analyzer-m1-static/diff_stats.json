@@ -1,0 +1,64 @@
+{
+  "ref": "docs/screenshots/analyzer-original/01-main-default.png",
+  "test": "docs/screenshots/analyzer-m1.png",
+  "align_note": "同尺寸直接比对",
+  "pixel_size": [
+    1920,
+    1270
+  ],
+  "scale": 2.0,
+  "metric": "channel",
+  "tolerance": 3.0,
+  "ignore_regions": [
+    [
+      16.0,
+      62.0,
+      744.0,
+      268.0
+    ],
+    [
+      16.0,
+      358.0,
+      684.0,
+      244.0
+    ]
+  ],
+  "total_px": 973248,
+  "diff_px": 21254,
+  "diff_ratio": 0.021838,
+  "mean_diff": 1.739,
+  "median_diff": 0.0,
+  "max_diff": 218.0,
+  "top_regions": [
+    {
+      "logical": [
+        0.0,
+        0.0,
+        960.0,
+        624.0
+      ],
+      "cells": 172,
+      "diff_px": 20262
+    },
+    {
+      "logical": [
+        420.0,
+        331.5,
+        120.0,
+        39.0
+      ],
+      "cells": 8,
+      "diff_px": 916
+    },
+    {
+      "logical": [
+        570.0,
+        39.0,
+        210.0,
+        39.0
+      ],
+      "cells": 13,
+      "diff_px": 115
+    }
+  ]
+}

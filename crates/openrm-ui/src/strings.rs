@@ -241,3 +241,134 @@ pub fn detect_lang() -> Lang {
     }
     Lang::Zh
 }
+
+/// Analyzer 控件的文案查表：入参是原版 `Strings.h` 里的英文字面量，
+/// 返回当前语言的显示文本；表未覆盖的条目原样返回。
+/// Analyzer 专有 + common 共用条目双语表：(英文字面量, 中文)。
+/// Analyzer 专有条目在前（同名字面量优先取 Analyzer 语义），common 在后。
+static ANALYZER_ROWS: &[(&str, &str)] = &[
+    ("RELEASE", "释放"),
+    ("RANGE", "范围"),
+    ("ATTACK", "起音"),
+    ("RES", "分辨率"),
+    ("UNDO", "撤销"),
+    ("REDO", "重做"),
+    ("SAVE", "保存"),
+    ("LOAD", "读取"),
+    ("Spectrum display release time (dB-domain fall, 0.05-2 s)", "频谱显示释放时间（对数域回落，0.05–2 秒）"),
+    ("Release fall mode: LOG = dB-domain one-pole (slows near signal), LIN = linear dB/s fall (constant speed)", "释放回落模式：对数 = dB 域单极点（接近信号时渐缓），线性 = 恒定 dB/s 速率下落"),
+    ("Spectrum display bottom: click to cycle 80 / 100 / 120 dB", "频谱显示范围：点击循环切换底部 80 / 100 / 120 dB"),
+    ("Spectrum display attack time", "频谱显示上升时间"),
+    ("Spectrum analysis FFT size (L/M/H: 2048/4096/8192)", "频谱分析 FFT 尺寸（低/中/高: 2048/4096/8192）"),
+    ("PBT low-frequency resolution (L/M/H: 40/20/10 Hz, smaller = finer)", "PBT 低频分辨率（低/中/高：40/20/10 Hz，越小越精细）"),
+    ("Switch analysis engine (STFT / VQT / PBT / RTA)", "切换分析引擎（STFT / VQT / PBT / RTA）"),
+    ("Channel display: PWR (merge, total power) / L/R stereo / SUM (merge, mono sum)", "声道显示：PWR（合并，能量和）/ L/R 立体声 / SUM（合并，信号和）"),
+    ("Merge algorithm (PWR: Total Power, SUM: Mono Sum)", "合并算法（PWR: 能量和, SUM: 信号和）"),
+    ("L/R", "左右"),
+    ("PWR", "能量和"),
+    ("SUM", "信号和"),
+    ("LOG", "对数"),
+    ("LIN", "线性"),
+    ("HOLD", "保持"),
+    ("RESET", "重置"),
+    ("Meter mode: dBTP (true peak, ITU-R BS.1770) / dBFS + RMS (VU meter is always shown separately)", "电平表模式：dBTP 真峰值（ITU-R BS.1770）/ dBFS+RMS（独立 VU 表常驻显示）"),
+    ("Peak hold on/off (spectrum hold curve and meter hold line)", "峰值保持开关（频谱保持曲线与电平表保持亮线）"),
+    ("Reset everything: meter hold / overload / persistent true peak / loudness (I, LRA, true peak)", "全部重置：电平表保持/过载/持久真峰值与响度（综合、LRA、真峰值）"),
+    ("L", "低"),
+    ("M", "中"),
+    ("H", "高"),
+    ("FREEZE", "冻结"),
+    ("Freeze display: hold current picture; switching engine re-analyzes the same frozen audio with the new algorithm", "冻结显示：定格当前画面；冻结中切换引擎时，用新算法重新分析同一段冻结音频"),
+    ("DEVELOPER", "开发者"),
+    ("Signal", "测试信号"),
+    ("Frequency", "频率"),
+    ("Level", "电平"),
+    ("RESTART", "重开"),
+    ("RESEED", "换种子"),
+    ("TO OUTPUT", "送到输出"),
+    ("Peak hold duration: click to cycle 0.5s / 2s / ∞ (infinite hold)", "峰值保持时长：点击循环切换 0.5s / 2s / ∞（无限保持）"),
+    ("Spectrum slope (dB/oct, pivot ~632 Hz): STFT 0/3/4.5, VQT/PBT/RTA -3/0/1.5; each engine keeps its own value", "频谱斜率（dB/oct，支点约 632 Hz）：STFT 0/3/4.5，VQT/PBT/RTA -3/0/1.5；各引擎独立保存"),
+    ("Window mode (STFT and VQT each keep their own value): SHARP (Hann: sharp mainlobe, classic response) / CLEAN (5-term Blackman-Harris: -125 dB ultra-low leakage, slightly wider mainlobe)", "窗函数模式（STFT 与 VQT 独立保存档位）：锐利（Hann: 锐利窄主瓣，经典响应）/ 纯净（5阶 Blackman-Harris: -125 dB 超低旁瓣泄露，主瓣略宽）"),
+    ("SHARP", "锐利"),
+    ("CLEAN", "纯净"),
+    ("RTA fractional-octave resolution (L/M/H = 1/6/1/12/1/24: 59/118/236 bands)", "RTA 分数倍频程分辨率（低/中/高 = 1/6/1/12/1/24：59/118/236 带）"),
+    ("VQT low-frequency bandwidth floor gamma (L/M/H = 20/10/5 Hz): band width = fc/Q + gamma — H = narrowest low bands, finest low-frequency resolution; L = wider low bands, faster response", "VQT 低频带宽下限 γ（低/中/高 = 20/10/5 Hz）：带宽 = fc/Q + γ —— 高档低频带最窄、最低频分辨力最高；低档低频带更宽、响应更快"),
+    ("MOMENTARY", "瞬时"),
+    ("SHORT-TERM", "短时"),
+    ("TRUE PEAK", "真峰值"),
+    ("Loudness target preset: -9 / -14 (streaming music) / -23 (EBU R128 broadcast) / -24", "响度目标预设：-9 / -14（流媒体音乐）/ -23（EBU R128 广播）/ -24"),
+    ("Loudness bar scale window offset (top = target + offset, 1/3 height = target, bottom = target - 2x offset): +9 / +18 LU", "响度条刻度窗偏移（顶 = 目标+偏移，1/3 高度 = 目标，底 = 目标-2×偏移）：+9 / +18 LU"),
+    ("Reset integrated loudness, LRA and true peak hold", "重置综合响度、LRA 与真峰值锁存"),
+    ("MIN", "最慢"),
+    ("SLOW", "慢速"),
+    ("MED", "中速"),
+    ("FAST", "快速"),
+    ("MAX", "最快"),
+    ("Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.", "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。"),
+    ("Oscilloscope mode: ROLL (continuous real-time window, rightmost edge is current moment) / SYNC (fundamental frequency period-locked) / SWEEP (free-running sweep: the pen writes sample-by-sample, wraps after one time window and overwrites the old trace)", "示波器模式：ROLL（实时连续窗口，右侧为当前最新采样点）/ SYNC（基频周期同步锁相）/ SWEEP（自由扫描：笔逐样本写入，扫满一个时间窗后回卷左缘覆盖旧迹线）"),
+    ("Oscilloscope channel display: click to cycle M -> L -> R (button shows the current channel color). Trigger reference follows the displayed channel", "示波器声道显示：单击循环 M → L → R，按钮显示当前通道色；触发参考随显示通道自动决定"),
+    ("Oscilloscope time window: drag 10 ms - 2 s (logarithmic; sweep mode clears and rescans on change)", "示波器时间窗：拖动 10ms–2s（对数刻度；SWEEP 扫描模式下变更即清空重扫）"),
+    ("Oscilloscope amplitude zoom: drag 1x - 8x (logarithmic; double-click the plot to reset zoom)", "示波器幅度倍率：拖动 1x–8x（对数刻度；双击波形区复位缩放）"),
+    ("CORRELATION", "相关性"),
+    ("BALANCE", "平衡"),
+    ("ROLL", "滚动"),
+    ("SYNC", "同步"),
+    ("SWEEP", "扫描"),
+    ("Panorama display: FIELD = frequency-domain PAZ fan (azimuth per band) / VECTOR = time-domain Lissajous dot cloud on a 45-degree square", "声像显示：FIELD = 频域 PAZ 扇形（分频带方位角）/ VECTOR = 时域李萨如散点（45° 正方形）"),
+    ("Vector scope dot persistence (decay per analysis hop, so it is frame-rate independent): OFF (clear every hop) / SHORT / LONG", "矢量示波余辉持久度（按分析 hop 衰减，与刷新率无关）：关闭（每 hop 清空）/ 短 / 长"),
+    ("Vector scope amplitude zoom: x1 / x2 / x4. Out-of-range dots are scaled back along the origin direction by L1 distance, so the trajectory keeps its shape", "矢量示波幅度倍率：x1 / x2 / x4（越界点按 L1 距离沿原点方向等比缩回，轨迹不变形）"),
+    // --- common/Strings.h 共用条目（设置面板等复用） ---
+    ("LANGUAGE", "语言"),
+    ("DARK", "深色"),
+    ("LIGHT", "浅色"),
+    ("Theme Color", "主题色"),
+    ("SETTINGS", "设置"),
+    ("THEME", "主题"),
+    ("Hue", "色相"),
+    ("Saturation", "饱和度"),
+    ("NONE", "无"),
+    ("LOW", "低"),
+    ("MED", "中"),
+    ("HIGH", "高"),
+    ("中文", "中文"),
+    ("AUDIO", "音频"),
+    ("Input", "输入"),
+    ("Output", "输出"),
+    ("Driver", "驱动"),
+    ("Red", "红"),
+    ("Yellow", "黄"),
+    ("Blue", "蓝"),
+    ("Green", "绿"),
+    ("Save Here", "保存到此槽"),
+    ("Restore Default", "恢复默认"),
+];
+
+/// 同英文、不同条目下中文不同的歧义条目。
+///
+/// 原版 `kTxtLevelHold` 与 `kTxtGenHold` 的英文都是 `"HOLD"`，中文分别是
+/// 「保持」与「锁相位」；[`analyzer_label`] 按字面量只能命中第一义，歧义条目
+/// 用本枚举显式取词。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AnalyzerDup {
+    /// 发生器 HOLD 开关（原版 `kTxtGenHold`）。
+    GenHold,
+}
+
+/// 歧义条目双语取词（见 [`AnalyzerDup`]）。
+pub fn analyzer_dup_label(key: AnalyzerDup, lang: Lang) -> &'static str {
+    match (key, lang) {
+        (AnalyzerDup::GenHold, Lang::En) => "HOLD",
+        (AnalyzerDup::GenHold, Lang::Zh) => "锁相位",
+    }
+}
+
+pub fn analyzer_label(literal: &str, lang: Lang) -> String {
+    match lang {
+        Lang::En => literal.to_string(),
+        Lang::Zh => ANALYZER_ROWS
+            .iter()
+            .find(|(en, _)| *en == literal)
+            .map(|(_, zh)| zh.to_string())
+            .unwrap_or_else(|| literal.to_string()),
+    }
+}

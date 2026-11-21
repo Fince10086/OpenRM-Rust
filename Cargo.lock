@@ -1564,6 +1564,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "openrm-analyzer-dsp"
+version = "0.6.0"
+dependencies = [
+ "realfft",
+]
+
+[[package]]
 name = "openrm-dsp"
 version = "0.6.0"
 dependencies = [
@@ -1595,6 +1602,27 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "orm-analyzer"
+version = "0.6.0"
+dependencies = [
+ "clap-sys",
+ "egui",
+ "egui-wgpu",
+ "openrm-analyzer-dsp",
+ "openrm-ui",
+ "png 0.17.16",
+ "pollster",
+ "rfd",
+ "serde_json",
+ "truce",
+ "truce-clap",
+ "truce-egui",
+ "truce-test",
+ "truce-vst3",
+ "wgpu",
 ]
 
 [[package]]

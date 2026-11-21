@@ -1,0 +1,9 @@
+[package]
+name = "openrm-analyzer-dsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+realfft = "3"

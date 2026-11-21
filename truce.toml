@@ -12,3 +12,12 @@ description = "双通道带通 / 带阻滤波器，带 7 路随机调制。"
 category = "effect"
 fourcc = "ORMB"
 vst3_subcategory = "Filter"
+
+[[plugin]]
+name = "ORM Analyzer"
+bundle_id = "orm.analyzer"
+crate = "orm-analyzer"
+version = "0.1.0"
+description = "频谱 / 响度 / 立体声场测量分析器。"
+category = "effect"
+fourcc = "ORMA"

@@ -4,12 +4,14 @@ members = [
     "crates/openrm-dsp",
     "crates/openrm-ui",
     "crates/openrm-analyzer-dsp",
+    "crates/openrm-fusion-dsp",
     "plugins/bandpass",
     "plugins/analyzer",
+    "plugins/fusion",
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"

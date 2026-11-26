@@ -10,6 +10,11 @@ use std::sync::Arc;
 pub const REGULAR: &[u8] = include_bytes!("../assets/Mixed-Regular.ttf");
 pub const SEMI_BOLD: &[u8] = include_bytes!("../assets/Mixed-SemiBold.ttf");
 pub const BOLD: &[u8] = include_bytes!("../assets/Mixed-Bold.ttf");
+/// 中文：OPPO Sans 4.0（GB2312 子集，约 2 MB/档）。Outfit 只带 BandPass
+/// 用过的少量汉字，Fusion 的“频段 / 延迟 / 反馈 / 随机”等缺字由它补齐。
+pub const CJK_REGULAR: &[u8] = include_bytes!("../assets/OPPOSansSC-Regular.ttf");
+pub const CJK_SEMI_BOLD: &[u8] = include_bytes!("../assets/OPPOSansSC-SemiBold.ttf");
+pub const CJK_BOLD: &[u8] = include_bytes!("../assets/OPPOSansSC-Bold.ttf");
 
 pub const FAMILY_REGULAR: &str = "Mixed";
 pub const FAMILY_SEMI_BOLD: &str = "Mixed-SemiBold";
@@ -18,6 +23,21 @@ pub const FAMILY_BOLD: &str = "Mixed-Bold";
 /// 构造包含三档字重的字体定义（供截图/离线渲染在 `Context::run` 前预装）。
 pub fn definitions() -> FontDefinitions {
     let mut defs = FontDefinitions::default();
+
+    // 中文兜底放在各家族最前面：它不含拉丁字母，拉丁仍由 Outfit 渲染；
+    // 汉字则统一走 OPPO Sans，避免个别字落在 Outfit 的小字集里。
+    defs.font_data.insert(
+        "cjk-regular".to_owned(),
+        Arc::new(FontData::from_static(CJK_REGULAR)),
+    );
+    defs.font_data.insert(
+        "cjk-semibold".to_owned(),
+        Arc::new(FontData::from_static(CJK_SEMI_BOLD)),
+    );
+    defs.font_data.insert(
+        "cjk-bold".to_owned(),
+        Arc::new(FontData::from_static(CJK_BOLD)),
+    );
 
     for (name, data) in [
         ("mixed-regular", REGULAR),
@@ -30,15 +50,20 @@ pub fn definitions() -> FontDefinitions {
 
     // 默认（Regular）作为正文字体，放在 Proportional 家族首位。
     let proportional = defs.families.entry(FontFamily::Proportional).or_default();
-    proportional.insert(0, "mixed-regular".to_owned());
+    proportional.insert(0, "cjk-regular".to_owned());
+    proportional.push("mixed-regular".to_owned());
 
     defs.families.insert(
         FontFamily::Name(FAMILY_SEMI_BOLD.into()),
-        vec!["mixed-semibold".to_owned(), "mixed-regular".to_owned()],
+        vec![
+            "cjk-semibold".to_owned(),
+            "mixed-semibold".to_owned(),
+            "mixed-regular".to_owned(),
+        ],
     );
     defs.families.insert(
         FontFamily::Name(FAMILY_BOLD.into()),
-        vec!["mixed-bold".to_owned(), "mixed-semibold".to_owned()],
+        vec!["cjk-bold".to_owned(), "mixed-bold".to_owned(), "mixed-semibold".to_owned()],
     );
 
     defs
@@ -46,6 +71,10 @@ pub fn definitions() -> FontDefinitions {
 
 /// 把三档字重装进 egui，并保留 egui 自带字体做兜底（箭头、符号等）。
 pub fn install(ctx: &egui::Context) {
+    // 新编辑器可能复用同一个 egui Context：字体定义被重置后，命名字体族
+    // 要到下一帧才重新建立。若沿用上一个实例的 ready 标记，首帧就会去
+    // 取尚不存在的 Named family，宿主里重开编辑器时会直接空白。
+    NAMED_READY.store(false, Ordering::Relaxed);
     ctx.set_fonts(definitions());
 }
 
@@ -71,22 +100,28 @@ fn has(name: &str) -> bool {
 /// 的字宽、行高对齐。
 const TEXT_SCALE: f32 = 0.8;
 
+/// 字号取整到像素：iPlug2 的字号换算到 0.8 倍后经常是 10.4 / 14.4 这类
+/// 小数，ab_glyph 在小数字号下会按亚像素栅格化，中文笔画容易发灰、发毛。
+fn px(size: f32) -> f32 {
+    (size * TEXT_SCALE).round().max(1.0)
+}
+
 pub fn regular(size: f32) -> egui::FontId {
-    egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
+    egui::FontId::new(px(size), FontFamily::Proportional)
 }
 
 pub fn semibold(size: f32) -> egui::FontId {
     if has(FAMILY_SEMI_BOLD) {
-        egui::FontId::new(size * TEXT_SCALE, FontFamily::Name(FAMILY_SEMI_BOLD.into()))
+        egui::FontId::new(px(size), FontFamily::Name(FAMILY_SEMI_BOLD.into()))
     } else {
-        egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
+        egui::FontId::new(px(size), FontFamily::Proportional)
     }
 }
 
 pub fn bold(size: f32) -> egui::FontId {
     if has(FAMILY_BOLD) {
-        egui::FontId::new(size * TEXT_SCALE, FontFamily::Name(FAMILY_BOLD.into()))
+        egui::FontId::new(px(size), FontFamily::Name(FAMILY_BOLD.into()))
     } else {
-        egui::FontId::new(size * TEXT_SCALE, FontFamily::Proportional)
+        egui::FontId::new(px(size), FontFamily::Proportional)
     }
 }

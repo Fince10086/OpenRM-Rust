@@ -12,3 +12,6 @@ docs/screenshots/analyzer-original/_scratch_*.png
 # 像素 diff 中间产物：仅保留最终静态掩码口径 analyzer-m1-static/
 docs/screenshots/diff/*
 !docs/screenshots/diff/analyzer-m1-static/
+
+# 调试发布包（体积大，按需生成）
+/dist/

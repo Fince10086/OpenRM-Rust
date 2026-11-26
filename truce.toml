@@ -21,3 +21,12 @@ version = "0.1.0"
 description = "频谱 / 响度 / 立体声场测量分析器。"
 category = "effect"
 fourcc = "ORMA"
+
+[[plugin]]
+name = "ORM Fusion"
+bundle_id = "orm.fusion"
+crate = "orm-fusion"
+description = "频域分频段延迟：8 段、10 秒频谱历史、4 倍重叠。"
+category = "effect"
+fourcc = "ORMF"
+vst3_subcategory = "Delay"

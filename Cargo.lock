@@ -1565,24 +1565,32 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "openrm-analyzer-dsp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "realfft",
 ]
 
 [[package]]
 name = "openrm-dsp"
-version = "0.6.0"
+version = "0.7.0"
+dependencies = [
+ "realfft",
+]
+
+[[package]]
+name = "openrm-fusion-dsp"
+version = "0.7.0"
 dependencies = [
  "realfft",
 ]
 
 [[package]]
 name = "openrm-ui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "egui",
  "openrm-dsp",
+ "serde_json",
 ]
 
 [[package]]
@@ -1606,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "orm-analyzer"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap-sys",
  "egui",
@@ -1627,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "orm-bandpass"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap-sys",
  "egui",
@@ -1639,6 +1647,29 @@ dependencies = [
  "rfd",
  "serde_json",
  "truce",
+ "truce-au",
+ "truce-clap",
+ "truce-egui",
+ "truce-test",
+ "truce-vst3",
+ "wgpu",
+]
+
+[[package]]
+name = "orm-fusion"
+version = "0.7.0"
+dependencies = [
+ "clap-sys",
+ "egui",
+ "egui-wgpu",
+ "openrm-fusion-dsp",
+ "openrm-ui",
+ "png 0.17.16",
+ "pollster",
+ "rfd",
+ "serde_json",
+ "truce",
+ "truce-au",
  "truce-clap",
  "truce-egui",
  "truce-test",
@@ -2444,6 +2475,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-au"
+version = "6.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9168fc2f0fa9b8f589e89518e200ddb103020652d317a6d24a44214132278aa"
+dependencies = [
+ "cc",
+ "crossbeam-queue",
+ "truce-core",
+ "truce-params",
+ "truce-shim-types",
+]
+
+[[package]]
 name = "truce-build"
 version = "6.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2629,6 +2673,12 @@ dependencies = [
  "truce-gui-types",
  "truce-params",
 ]
+
+[[package]]
+name = "truce-shim-types"
+version = "6.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24abb900fc0dc4d9f46dd8b88150f68b2570993649e85c1cf12a7db94e06e8e"
 
 [[package]]
 name = "truce-test"

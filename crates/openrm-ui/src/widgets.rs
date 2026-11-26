@@ -4,7 +4,7 @@
 use egui::{Align2, Color32, CursorIcon, Id, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use std::f32::consts::PI;
 
-use crate::{fonts, theme::Theme};
+use crate::{fonts, theme::{self, Theme}};
 
 pub const F_MIN: f64 = 20.0;
 pub const F_MAX: f64 = 20_000.0;
@@ -517,8 +517,11 @@ pub fn filter_pad(ui: &mut Ui, rect: Rect, model: &PadModel, theme: &Theme, id: 
             freq_to_x(model.freq * fm, plot),
             bw_to_y((model.bw_mult * bm).clamp(BW_MIN, BW_MAX), plot),
         );
-        p.circle_filled(g, 4.5, theme.col_100());
-        p.circle_filled(g, 3.5, Theme::random_color(ci));
+        // 对齐 C++ RandomColorGhost：r=9 的 60% 透明色晕、r=5.4 纯色、r=2.25 白芯
+        let c = Theme::random_color(ci);
+        p.circle_filled(g, 9.0, theme::rgba(c, 150));
+        p.circle_filled(g, 5.4, c);
+        p.circle_filled(g, 2.25, theme.col_100());
     }
     p.circle_filled(handle, PAD_HANDLE_R, theme.col_900());
     p.circle_filled(handle, PAD_HANDLE_R * 0.25, theme.col_100());
@@ -552,7 +555,7 @@ fn knob(p: &egui::Painter, c: Pos2, theme: &Theme) {
     p.circle_filled(c, HANDLE_R, theme.col_900());
 }
 
-fn label_value(ui: &Ui, p: &egui::Painter, text: &str, font: egui::FontId, color: Color32) -> f32 {
+fn label_value(ui: &Ui, _p: &egui::Painter, text: &str, font: egui::FontId, color: Color32) -> f32 {
     ui.painter()
         .layout_no_wrap(text.to_owned(), font, color)
         .size()
@@ -750,8 +753,12 @@ pub fn band_slider(ui: &mut Ui, rect: Rect, m: &BandModel, theme: &Theme, id: Id
 pub struct GainModel<'a> {
     pub db: f64,
     pub label: &'a str,
+    pub min_db: f64,
+    pub max_db: f64,
     pub random_on: bool,
     pub random_color: usize,
+    /// false 时完全不画随机色块（Fusion 的 gain 不需要随机映射）
+    pub show_random: bool,
     pub delta_db: f32,
     pub ghost: bool,
     pub tip: Option<&'a str>,
@@ -764,6 +771,8 @@ pub struct GainEdit {
     pub ended: bool,
     pub toggle_random: bool,
     pub color_menu: bool,
+    /// 点击 RANGE / SPEED 左侧的色组色块 → 打开“选择当前随机色”
+    pub color_picker: bool,
     pub edit_value: bool,
 }
 
@@ -771,6 +780,13 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     let mut edit = GainEdit::default();
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 0, theme.col_100());
+    // 同 hbar：主拖动区先注册，色块/数值区后注册才能拿到点击。
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let resp = if let Some(t) = m.tip {
+        resp.on_hover_text(t)
+    } else {
+        resp
+    };
 
     // 文本框：右侧 16 + 6 间隙；增益轨在剩余 36 宽内
     let text_col = Rect::from_min_max(
@@ -790,7 +806,8 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     let font = fonts::semibold(TEXT_SIZE);
     let value_font = fonts::regular(TEXT_SIZE);
 
-    let norm = ((m.db + 96.0) / 108.0).clamp(0.0, 1.0) as f32;
+    let span = (m.max_db - m.min_db).max(1e-9);
+    let norm = ((m.db - m.min_db) / span).clamp(0.0, 1.0) as f32;
     let y = track_y1 - norm * (track_y1 - track_y0);
 
     vtrack(&p, track_col, top, rect.bottom(), theme);
@@ -801,7 +818,7 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     );
 
     // 随机目标幽灵：白环 + 半透明色芯
-    let ghost_norm = ((m.db + m.delta_db as f64 + 96.0) / 108.0).clamp(0.0, 1.0) as f32;
+    let ghost_norm = ((m.db + m.delta_db as f64 - m.min_db) / span).clamp(0.0, 1.0) as f32;
     let gy = track_y1 - ghost_norm * (track_y1 - track_y0);
     if m.random_on {
         p.circle_filled(Pos2::new(cx, gy), HANDLE_R + HANDLE_RING, theme.col_100());
@@ -845,14 +862,18 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     let title_h = ls.x;
     let swatch_cy = rect.bottom() - title_h - 8.0 - 7.0;
     let sw = Rect::from_center_size(Pos2::new(text_col.center().x, swatch_cy), Vec2::splat(14.0));
-    let c = Theme::random_color(m.random_color);
-    p.rect_filled(sw, 0, if m.random_on { c } else { Theme::dim_color(c) });
-    let sw_resp = ui.interact(sw, id.with("random"), Sense::click());
-    if sw_resp.clicked() {
-        edit.toggle_random = true;
+    if m.show_random {
+        let c = Theme::random_color(m.random_color);
+        p.rect_filled(sw, 0, if m.random_on { c } else { Theme::dim_color(c) });
     }
-    if sw_resp.secondary_clicked() {
-        edit.color_menu = true;
+    if m.show_random {
+        let sw_resp = ui.interact(sw, id.with("random"), Sense::click());
+        if sw_resp.clicked() {
+            edit.toggle_random = true;
+        }
+        if sw_resp.secondary_clicked() {
+            edit.color_menu = true;
+        }
     }
 
     // 数值区点击 → 文本输入
@@ -865,12 +886,6 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
         edit.edit_value = true;
     }
 
-    let resp = ui.interact(rect, id, Sense::click_and_drag());
-    let resp = if let Some(t) = m.tip {
-        resp.on_hover_text(t)
-    } else {
-        resp
-    };
     if resp.hovered() || resp.dragged() {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
     }
@@ -880,7 +895,7 @@ pub fn gain_slider(ui: &mut Ui, rect: Rect, m: &GainModel, theme: &Theme, id: Id
     if resp.dragged() || resp.clicked() {
         if let Some(pos) = ui.ctx().pointer_interact_pos() {
             let n = ((track_y1 - pos.y) / (track_y1 - track_y0)).clamp(0.0, 1.0);
-            edit.db = Some((n as f64 * 108.0 - 96.0).clamp(-96.0, 12.0));
+            edit.db = Some((m.min_db + n as f64 * span).clamp(m.min_db, m.max_db));
         }
     }
     if resp.drag_stopped() {
@@ -921,6 +936,8 @@ pub struct BarEdit {
     pub ended: bool,
     pub toggle_random: bool,
     pub color_menu: bool,
+    /// 点击 RANGE / SPEED 左侧的色组色块 → 打开“选择当前随机色”
+    pub color_picker: bool,
     pub edit_value: bool,
 }
 
@@ -928,6 +945,14 @@ pub fn hbar(ui: &mut Ui, rect: Rect, m: &BarModel, theme: &Theme, id: Id) -> Bar
     let mut edit = BarEdit::default();
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 0, theme.col_100());
+    // 主滑杆的命中区必须先注册：后注册的随机色块/数值输入才能压在它上面，
+    // 否则整行 click_and_drag 会吞掉色块的左键和右键。
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let resp = if let Some(t) = m.tip {
+        resp.on_hover_text(t)
+    } else {
+        resp
+    };
     let label_font = if m.label_regular {
         fonts::regular(TEXT_SIZE)
     } else {
@@ -941,6 +966,10 @@ pub fn hbar(ui: &mut Ui, rect: Rect, m: &BarModel, theme: &Theme, id: Id) -> Bar
         let sw = Rect::from_min_size(Pos2::new(rect.left() + 1.0, cy - 7.0), Vec2::splat(14.0));
         p.rect_filled(sw, 0, Theme::random_color(c));
         label_l = sw.right() + 8.0;
+        let sw_resp = ui.interact(sw, id.with("swatch_left"), Sense::click());
+        if sw_resp.clicked() || sw_resp.secondary_clicked() {
+            edit.color_picker = true;
+        }
     }
     let mut value_r = rect.right();
     if let Some((c, on)) = m.random {
@@ -996,12 +1025,6 @@ pub fn hbar(ui: &mut Ui, rect: Rect, m: &BarModel, theme: &Theme, id: Id) -> Bar
     );
     knob(&p, Pos2::new(x, track.center().y), theme);
 
-    let resp = ui.interact(rect, id, Sense::click_and_drag());
-    let resp = if let Some(t) = m.tip {
-        resp.on_hover_text(t)
-    } else {
-        resp
-    };
     if resp.hovered() || resp.dragged() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
@@ -1589,4 +1612,87 @@ pub fn placeholder_wave(p: &egui::Painter, rect: Rect, color: Color32) {
         pts.push(Pos2::new(x, y));
     }
     p.add(Shape::line(pts, Stroke::new(1.0_f32, color)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_hbar(ctx: &egui::Context, events: Vec<egui::Event>) -> BarEdit {
+        let mut out = BarEdit::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(crate::UI_WIDTH, crate::UI_HEIGHT),
+            )),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| {
+                    let model = BarModel {
+                        label: "RANGE",
+                        value_text: "35%",
+                        norm: 0.35,
+                        swatch_left: None,
+                        random: Some((0, true)),
+                        label_regular: true,
+                        tip: None,
+                    };
+                    out = hbar(
+                        ui,
+                        Rect::from_min_size(Pos2::new(740.0, 264.0), Vec2::new(156.0, 42.0)),
+                        &model,
+                        &Theme::default(),
+                        Id::new("test_hbar"),
+                    );
+                });
+        });
+        out
+    }
+
+    #[test]
+    fn random_swatch_click_is_not_swallowed_by_row_drag() {
+        let ctx = egui::Context::default();
+        let swatch = Pos2::new(895.0, 277.0);
+        let _ = run_hbar(&ctx, Vec::new());
+        let _ = run_hbar(&ctx, Vec::new());
+        let mut edit = BarEdit::default();
+        for (n, pressed) in [(0, true), (1, false)] {
+            edit = run_hbar(
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(swatch),
+                    egui::Event::PointerButton {
+                        pos: swatch,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+            );
+            let _ = n;
+        }
+        assert!(edit.toggle_random, "随机色块左键应切换，而不是改滑杆值");
+        assert!(edit.value.is_none(), "点色块不应误改滑杆");
+
+        let mut edit = BarEdit::default();
+        for pressed in [true, false] {
+            edit = run_hbar(
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(swatch),
+                    egui::Event::PointerButton {
+                        pos: swatch,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+            );
+        }
+        assert!(edit.color_menu, "随机色块右键应打开取色菜单");
+    }
 }

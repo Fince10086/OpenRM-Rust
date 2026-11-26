@@ -59,6 +59,9 @@ fn main() {
     let plugin_ctx =
         PluginContext::<BandPassParams>::new(mock_bridge(params.clone()), params.clone());
     let mut ui_state = editor::BandPassUi::default();
+    if std::env::var("BANDPASS_SHOT_SETTINGS").is_ok() {
+        ui_state.open_settings();
+    }
 
     let egui_ctx = egui::Context::default();
     egui_ctx.set_visuals(egui_theme());

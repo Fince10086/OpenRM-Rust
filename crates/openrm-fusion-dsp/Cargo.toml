@@ -1,0 +1,10 @@
+[package]
+name = "openrm-fusion-dsp"
+description = "ORM Fusion 的频域分频段延迟算法层（与插件框架无关）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+realfft = "3"

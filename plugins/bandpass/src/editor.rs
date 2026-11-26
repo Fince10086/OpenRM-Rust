@@ -4,15 +4,16 @@
 //! 控件行为取自 `plugins/common/controls/*.h`。任何"看起来差不多"的近似值
 //! 都在注释里标了原版常量名，便于日后核对。
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Vec2};
 use openrm_ui::{
     fonts,
+    preset::PresetBank,
+    shell,
     strings::{self, Key, Lang},
-    theme::{Theme, ThemeMode},
-    widgets::{self, BandEdit, BandModel, BarModel, GainModel, Icon, PadModel},
+    theme::Theme,
+    widgets::{self, BandEdit, BandModel, BarModel, GainModel, Icon, PadModel, PadEdit},
     UI_HEIGHT, UI_WIDTH,
 };
 use truce::prelude::*;
@@ -37,27 +38,27 @@ const PAD_R: (f32, f32, f32, f32) = (20.0, 288.0, 668.0, 468.0);
 const BAND_R: (f32, f32, f32, f32) = (20.0, 474.0, 668.0, 520.0);
 const GAIN_R: (f32, f32, f32, f32) = (672.0, 288.0, 730.0, 468.0);
 
-const COL1_X: f32 = 740.0;
-const COL2_X: f32 = 820.0;
-const BTN_W: f32 = 76.0;
-const PANEL_R: f32 = 896.0;
-const GRID_Y: f32 = 56.0;
-const CELL_W: f32 = 36.0;
-const CELL_H: f32 = 29.0;
-const CELL_STEP_X: f32 = 40.0;
-const CELL_STEP_Y: f32 = 33.0;
+const COL1_X: f32 = shell::layout::COL1_X;
+const COL2_X: f32 = shell::layout::COL2_X;
+const BTN_W: f32 = shell::layout::BTN_W;
+const PANEL_R: f32 = shell::layout::PANEL_R;
+const GRID_Y: f32 = shell::layout::GRID_Y;
+const CELL_W: f32 = shell::layout::CELL_W;
+const CELL_H: f32 = shell::layout::CELL_H;
+const CELL_STEP_X: f32 = shell::layout::CELL_STEP_X;
+const CELL_STEP_Y: f32 = shell::layout::CELL_STEP_Y;
 
 // 底部 quick 槽刻度：原版 mQuickTicks 中心在 39.5..609 之间
-const QUICK_X0: f32 = 39.5;
-const QUICK_X1: f32 = 648.5;
-const QUICK_W: f32 = 36.0;
-const QUICK_Y: f32 = 552.0;
-const QUICK_H: f32 = 26.0;
+const QUICK_X0: f32 = shell::layout::QUICK_X0;
+const QUICK_X1: f32 = shell::layout::QUICK_X1;
+const QUICK_W: f32 = shell::layout::QUICK_W;
+const QUICK_Y: f32 = shell::layout::QUICK_Y;
+const QUICK_H: f32 = shell::layout::QUICK_H;
 
-const FADE_L: f32 = 31.5;
-const FADE_R: f32 = 656.5;
-const FADE_Y0: f32 = 592.0;
-const FADE_Y1: f32 = 616.0;
+const FADE_L: f32 = shell::layout::FADE_L;
+const FADE_R: f32 = shell::layout::FADE_R;
+const FADE_Y0: f32 = shell::layout::FADE_Y0;
+const FADE_Y1: f32 = shell::layout::FADE_Y1;
 
 fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
     Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
@@ -302,62 +303,6 @@ struct Fade {
     dur: f64,
 }
 
-// ===== 设置文件 =====
-
-struct Settings {
-    lang: Lang,
-    hue: u16,
-    sat: u8,
-    dark: bool,
-}
-
-fn settings_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("Library/Application Support/OpenRM/ORMBandPass.settings")
-}
-
-fn load_settings() -> Settings {
-    let mut s = Settings {
-        lang: strings::detect_lang(),
-        hue: 45,
-        sat: 15,
-        dark: false,
-    };
-    if let Ok(txt) = std::fs::read_to_string(settings_path()) {
-        if let Ok(j) = serde_json::from_str::<serde_json::Value>(&txt) {
-            if let Some(v) = j.get("lang").and_then(|v| v.as_i64()) {
-                s.lang = if v == 1 { Lang::Zh } else { Lang::En };
-            }
-            if let Some(v) = j.get("hue").and_then(|v| v.as_i64()) {
-                s.hue = v as u16;
-            }
-            if let Some(v) = j.get("satMax").and_then(|v| v.as_i64()) {
-                s.sat = v as u8;
-            }
-            if let Some(v) = j.get("themeMode").and_then(|v| v.as_i64()) {
-                s.dark = v == 1;
-            }
-        }
-    }
-    s
-}
-
-fn save_settings(s: &Settings) {
-    let path = settings_path();
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let j = serde_json::json!({
-        "lang": if s.lang == Lang::Zh { 1 } else { 0 },
-        "hue": s.hue,
-        "satMax": s.sat,
-        "themeMode": if s.dark { 1 } else { 0 },
-    });
-    if let Ok(txt) = serde_json::to_string_pretty(&j) {
-        let _ = std::fs::write(path, txt);
-    }
-}
-
 // ===== UI 状态 =====
 
 pub struct BandPassUi {
@@ -366,10 +311,7 @@ pub struct BandPassUi {
     styled: bool,
     font_stage: u8,
     spectrum: Option<SpectrumUi>,
-    slots: Vec<Vec<f64>>,
-    numbers: Vec<usize>,
-    current: usize,
-    quick: usize,
+    bank: PresetBank,
     fade_time: f64,
     fade: Option<Fade>,
     undo: Vec<Vec<f64>>,
@@ -381,35 +323,20 @@ pub struct BandPassUi {
     drag_hover: Option<usize>,
     settings_open: bool,
     text_input: Option<TextInput>,
+    menu_armed: bool,
 }
 
 impl Default for BandPassUi {
     fn default() -> Self {
-        let s = load_settings();
-        let theme = Theme {
-            mode: if s.dark {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            hue: s.hue,
-            sat_max: s.sat,
-        };
-        let slots = factory_presets();
-        let mut numbers = vec![0; SLOT_COUNT];
-        for (i, n) in numbers.iter_mut().enumerate() {
-            *n = i + 1;
-        }
+        let (lang, theme) = shell::load_settings("ORMBandPass.settings");
+        let bank = PresetBank::from_factory(factory_presets());
         Self {
             theme,
-            lang: s.lang,
+            lang,
             styled: false,
             font_stage: 0,
             spectrum: None,
-            slots,
-            numbers,
-            current: 0,
-            quick: 0,
+            bank,
             fade_time: 0.25,
             fade: None,
             undo: Vec::new(),
@@ -421,6 +348,7 @@ impl Default for BandPassUi {
             drag_hover: None,
             settings_open: false,
             text_input: None,
+            menu_armed: false,
         }
     }
 }
@@ -451,6 +379,11 @@ impl BandPassUi {
         ui.ctx().set_style(style);
     }
 
+    /// 截图与自测用：打开设置面板。
+    pub fn open_settings(&mut self) {
+        self.settings_open = true;
+    }
+
     fn tr(&self, key: Key) -> &'static str {
         strings::tr(self.lang, key)
     }
@@ -467,11 +400,13 @@ impl BandPassUi {
         if idx >= SLOT_COUNT {
             return;
         }
-        let target = self.slots[self.numbers[idx] - 1].clone();
+        let Some(target) = self.bank.slot(idx).cloned() else {
+            return;
+        };
         let from = snapshot(&ctx.params());
         self.push_undo(from.clone());
-        self.current = idx;
-        self.quick = idx.min(QUICK_COUNT - 1);
+        self.bank.current = idx;
+        self.bank.quick = idx.min(QUICK_COUNT - 1);
         self.start_fade(from, target);
     }
 
@@ -590,10 +525,11 @@ impl BandPassUi {
         let Some(path) = file else { return };
         let j = serde_json::json!({
             "version": 3,
-            "presets": self.slots,
-            "currentPreset": self.current,
+            "presets": self.bank.slots,
+            "currentPreset": self.bank.current,
             "currentValues": snapshot(&ctx.params()),
-            "fadePos": self.quick as f64 / 7.0,
+            "numbers": self.bank.numbers,
+            "fadePos": self.bank.quick as f64 / 7.0,
         });
         let text = format!(
             "bandpass\n{}",
@@ -635,11 +571,21 @@ impl BandPassUi {
                     .collect::<Vec<_>>(),
             );
         }
-        if slots != vec![Vec::<f64>::new(); 0] && slots.len() == SLOT_COUNT {
-            self.slots = slots;
+        if !slots.is_empty() && slots.len() == SLOT_COUNT {
+            self.bank.slots = slots.into_iter().map(Some).collect();
         }
         if let Some(cur) = j.get("currentPreset").and_then(|v| v.as_i64()) {
-            self.current = cur.clamp(0, (SLOT_COUNT - 1) as i64) as usize;
+            self.bank.current = cur.clamp(0, (SLOT_COUNT - 1) as i64) as usize;
+        }
+        if let Some(nums) = j.get("numbers").and_then(|v| v.as_array()) {
+            for (i, n) in nums.iter().take(SLOT_COUNT).enumerate() {
+                if let Some(v) = n.as_u64() {
+                    self.bank.numbers[i] = v as usize;
+                }
+            }
+        }
+        if let Some(pos) = j.get("fadePos").and_then(|v| v.as_f64()) {
+            self.bank.quick = ((pos * 7.0).round() as usize).min(QUICK_COUNT - 1);
         }
         if let Some(vals) = j.get("currentValues").and_then(|v| v.as_array()) {
             if vals.len() == 34 {
@@ -682,8 +628,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
             if !ui.input(|i| i.pointer.any_down()) {
                 if let Some(to) = self.drag_hover {
                     if from != to {
-                        self.slots.swap(from, to);
-                        self.numbers.swap(from, to);
+                        self.bank.swap(from, to);
                     }
                 }
                 self.drag_from = None;
@@ -692,6 +637,19 @@ impl EditorUi<BandPassParams> for BandPassUi {
         }
         if !ui.input(|i| i.pointer.any_down()) {
             self.last_idle = snapshot(&p);
+        }
+        // 随机调制在 DSP 线程里持续改变幽灵球的目标，但宿主不会主动刷新 UI。
+        // 以前只在参数变化时重绘，球看起来一两秒跳一下；这里在随机开启时
+        // 持续请求下一帧，和 C++ 版的 60fps 定时器一致。
+        let random_anim = p.random_enable_freq_l.value()
+            || p.random_enable_freq_r.value()
+            || p.random_enable_bw_l.value()
+            || p.random_enable_bw_r.value()
+            || p.random_enable_gain_l.value()
+            || p.random_enable_gain_r.value()
+            || p.random_enable_mix.value();
+        if random_anim || self.fade.is_some() {
+            ui.ctx().request_repaint();
         }
 
         // ================= 左半：两个滤波垫 + 带宽滑杆 + 增益条 =================
@@ -808,6 +766,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
             }
             if let Some(sl) = edit.slope {
                 let _ = sl;
+                self.menu_armed = false;
                 self.menu = Some((
                     MenuKind::Slope(is_l),
                     ui.ctx()
@@ -830,6 +789,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 } else {
                     ColorTarget::Bw(is_l)
                 };
+                self.menu_armed = false;
                 self.menu = Some((
                     MenuKind::Color { target },
                     ui.ctx()
@@ -922,8 +882,11 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 &GainModel {
                     db: gain_db,
                     label: if is_l { tr(Key::GainL) } else { tr(Key::GainR) },
+                    min_db: -96.0,
+                    max_db: 12.0,
                     random_on: en_gain,
                     random_color: color_g as usize,
+                    show_random: true,
                     delta_db: deltas.gain_db[ch],
                     ghost: false,
                     tip: Some(tr(Key::TipGain)),
@@ -950,6 +913,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
                 );
             }
             if gedit.color_menu {
+                self.menu_armed = false;
                 self.menu = Some((
                     MenuKind::Color {
                         target: ColorTarget::Gain(is_l),
@@ -973,93 +937,47 @@ impl EditorUi<BandPassParams> for BandPassUi {
         }
 
         // ================= 右侧面板 =================
-        // PRESETS 标题
-        {
-            let pnt = ui.painter_at(full);
-            let font = fonts::bold(20.0);
-            pnt.text(
-                Pos2::new(COL1_X, 41.0),
-                Align2::LEFT_CENTER,
-                tr(Key::Presets),
-                font.clone(),
-                theme.col_900(),
-            );
-        }
-
-        // 24 个预设槽
-        for i in 0..SLOT_COUNT - QUICK_COUNT {
-            let row = i / 4;
-            let col = i % 4;
-            let x = COL1_X + col as f32 * CELL_STEP_X;
-            let y = GRID_Y + row as f32 * CELL_STEP_Y;
-            let r = rect(x, y, x + CELL_W, y + CELL_H);
-            let label = format!("{}", self.numbers[i + QUICK_COUNT]);
-            let drag_target = self.drag_from.is_some() && self.drag_hover == Some(i);
-            let tip = format!(
-                "{}\n{}\n{}\n{}",
-                tr(Key::TipDrag),
-                tr(Key::TipSaveHere),
-                tr(Key::TipMenu),
-                tr(Key::TipPresets)
-            );
-            let resp = widgets::preset_slot(
-                ui,
-                r,
-                &label,
-                drag_target,
-                &theme,
-                Id::new(("slot", i)),
-                Some(tip.as_str()),
-            );
+        shell::preset_heading(ui, &theme, lang);
+        let labels = self.bank.grid_labels();
+        let responses = shell::preset_grid(
+            ui,
+            &theme,
+            lang,
+            &labels,
+            if self.drag_from.is_some() { self.drag_hover } else { None },
+            "orm_bandpass",
+        );
+        for (i, resp) in responses.into_iter().enumerate() {
+            let abs = i + QUICK_COUNT;
             if resp.hovered {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if resp.drag_started {
-                self.drag_from = Some(i);
+                self.drag_from = Some(abs);
             }
             if resp.dragging {
-                self.drag_hover = Some(i);
+                self.drag_hover = Some(abs);
             }
             if resp.clicked {
-                self.load_slot(ctx, i + QUICK_COUNT);
+                self.load_slot(ctx, abs);
             }
             if resp.save_here {
                 let s = snapshot(&ctx.params());
-                self.slots[i + QUICK_COUNT] = s;
-                self.numbers[i + QUICK_COUNT] = i + 1 + QUICK_COUNT;
+                self.bank.save(abs, s);
             }
             if resp.secondary {
+                self.menu_armed = false;
                 self.menu = Some((
-                    MenuKind::Preset(i + QUICK_COUNT),
-                    ui.ctx().pointer_latest_pos().unwrap_or(r.left_bottom()),
+                    MenuKind::Preset(abs),
+                    ui.ctx().pointer_latest_pos().unwrap_or(Pos2::new(COL1_X, GRID_Y)),
                 ));
             }
         }
 
         // MORPH（预设渐变时间）
-        let morph_norm = ((self.fade_time.max(0.01) / 0.01).ln() / 6000f64.ln()).clamp(0.0, 1.0);
-        let morph_text = if self.fade_time < 1.0 {
-            format!("{:.2}s", self.fade_time)
-        } else {
-            format!("{:.1}s", self.fade_time)
-        };
-        let morph = widgets::hbar(
-            ui,
-            rect(COL1_X, 188.0, PANEL_R, 230.0),
-            &BarModel {
-                label: tr(Key::Morph),
-                value_text: &morph_text,
-                norm: morph_norm,
-                swatch_left: None,
-                random: None,
-                label_regular: false,
-                tip: Some(tr(Key::TipMorph)),
-            },
-            &theme,
-            Id::new("morph"),
-        );
+        let morph = shell::morph_bar(ui, &theme, lang, self.fade_time, "orm_bandpass");
         if let Some(v) = morph.value {
-            self.fade_time = 0.01 * 6000f64.powf(v);
+            self.fade_time = shell::morph_seconds(v);
         }
         if morph.edit_value {
             self.text_input = Some(TextInput {
@@ -1070,26 +988,24 @@ impl EditorUi<BandPassParams> for BandPassUi {
             });
         }
 
-        // RANDOM 标题 + 选色块
-        {
-            let pnt = ui.painter_at(full);
-            let font = fonts::bold(20.0);
-            pnt.text(
-                Pos2::new(COL1_X, 247.0),
-                Align2::LEFT_CENTER,
-                tr(Key::Random),
-                font,
-                theme.col_900(),
-            );
-            let sw = rect(881.0, 240.0, 895.0, 254.0);
-            pnt.rect_filled(sw, 0, Theme::random_color(self.selected_color));
-            let resp = ui.interact(sw, Id::new("rand_picker"), Sense::click());
-            if resp.clicked() {
+        // RANDOM 标题 + 选色块：左右键都打开取色菜单
+        let swatch = shell::random_header(
+            ui,
+            &theme,
+            lang,
+            self.selected_color,
+            true,
+            "orm_bandpass",
+            Some(tr(Key::TipRandomPicker)),
+        );
+        if swatch.clicked || swatch.secondary {
+            self.menu_armed = false;
                 self.menu = Some((
-                    MenuKind::RandomPicker,
-                    ui.ctx().pointer_latest_pos().unwrap_or(sw.left_bottom()),
-                ));
-            }
+                MenuKind::RandomPicker,
+                ui.ctx()
+                    .pointer_latest_pos()
+                    .unwrap_or(Pos2::new(860.0, 260.0)),
+            ));
         }
 
         let ci = self.selected_color;
@@ -1142,6 +1058,14 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if range.began {
             self.push_undo(self.last_idle.clone());
         }
+        if range.color_picker {
+            self.menu_armed = false;
+                self.menu = Some((
+                MenuKind::RandomPicker,
+                ui.ctx().pointer_latest_pos().unwrap_or(Pos2::new(COL1_X + 80.0, 270.0)),
+            ));
+            self.menu_armed = false;
+        }
         if let Some(v) = range.value {
             set_plain(ctx, pid(aid), v);
         }
@@ -1177,6 +1101,14 @@ impl EditorUi<BandPassParams> for BandPassUi {
         );
         if speed.began {
             self.push_undo(self.last_idle.clone());
+        }
+        if speed.color_picker {
+            self.menu_armed = false;
+                self.menu = Some((
+                MenuKind::RandomPicker,
+                ui.ctx().pointer_latest_pos().unwrap_or(Pos2::new(COL1_X + 80.0, 315.0)),
+            ));
+            self.menu_armed = false;
         }
         if let Some(v) = speed.value {
             set_plain(ctx, pid(rid), 0.01 * 6000f64.powf(v));
@@ -1268,7 +1200,8 @@ impl EditorUi<BandPassParams> for BandPassUi {
             set_plain(ctx, pid(P::RandomEnableMix), if en_mix { 0.0 } else { 1.0 });
         }
         if mix_edit.color_menu {
-            self.menu = Some((
+            self.menu_armed = false;
+                self.menu = Some((
                 MenuKind::Color {
                     target: ColorTarget::Mix,
                 },
@@ -1286,104 +1219,40 @@ impl EditorUi<BandPassParams> for BandPassUi {
             });
         }
 
-        // 图标行：撤销 / 重做 / 保存 / 读取（36×28）
-        let icon_y0 = 482.0;
-        let icon_y1 = 510.0;
-        for (i, icon) in [Icon::Undo, Icon::Redo, Icon::Save, Icon::Load]
-            .iter()
-            .enumerate()
-        {
-            let x = COL1_X + i as f32 * 40.0;
-            if widgets::icon_button(
-                ui,
-                rect(x, icon_y0, x + 36.0, icon_y1),
-                *icon,
-                &theme,
-                Id::new(("icon", i)),
-                Some(tr(match icon {
-                    Icon::Undo => Key::Undo,
-                    Icon::Redo => Key::Redo,
-                    Icon::Save => Key::Save,
-                    Icon::Load => Key::Load,
-                })),
-            ) {
-                match icon {
-                    Icon::Undo => self.undo(ctx),
-                    Icon::Redo => self.redo(ctx),
-                    Icon::Save => self.save_orm(ctx),
-                    Icon::Load => self.load_orm(ctx),
-                }
+        // 图标行 + 标题区：与 Fusion 共用同一套外壳组件
+        if let Some(icon) = shell::icon_row(ui, &theme, lang, "orm_bandpass") {
+            match icon {
+                Icon::Undo => self.undo(ctx),
+                Icon::Redo => self.redo(ctx),
+                Icon::Save => self.save_orm(ctx),
+                Icon::Load => self.load_orm(ctx),
             }
         }
-
-        // 标题区：ORM（32 Bold）+ 齿轮 + 版本号 + BandPass
-        {
-            let pnt = ui.painter_at(full);
-            let orm_font = fonts::bold(32.0);
-            let orm_w = pnt
-                .layout_no_wrap("ORM".to_owned(), orm_font.clone(), theme.col_900())
-                .size()
-                .x;
-            pnt.text(
-                Pos2::new(COL1_X, 545.0),
-                Align2::LEFT_TOP,
-                "ORM",
-                orm_font,
-                theme.col_900(),
-            );
-            // 原版：MeasureText("ORM") 的墨迹右缘 +8 放齿轮，齿轮边长 = 墨迹高度，
-            // 版本号再在齿轮右侧 +8，底边与 575 对齐。
-            let gear_l = COL1_X + orm_w + 7.0;
-            let gear_size = 23.0;
-            let gear = rect(gear_l, 553.0, gear_l + gear_size, 553.0 + gear_size);
-            let gear_r = gear.right();
-            if widgets::gear_button(ui, gear, &theme, Id::new("gear"), None) {
-                self.settings_open = true;
-            }
-            pnt.text(
-                Pos2::new(gear_r + 8.0, 575.0),
-                Align2::LEFT_BOTTOM,
-                &format!("v{}", env!("CARGO_PKG_VERSION")),
-                fonts::regular(20.0),
-                theme.col_500(),
-            );
-            pnt.text(
-                Pos2::new(COL1_X, 576.0),
-                Align2::LEFT_TOP,
-                "BandPass",
-                fonts::bold(32.0),
-                theme.col_900(),
-            );
+        if shell::title_block(
+            ui,
+            &theme,
+            "BandPass",
+            env!("CARGO_PKG_VERSION"),
+            "orm_bandpass",
+        ) {
+            self.settings_open = true;
         }
 
         // ================= 底部：quick 槽 + fade =================
-        for i in 0..QUICK_COUNT {
-            let cx = QUICK_X0 + (QUICK_X1 - QUICK_X0) * i as f32 / (QUICK_COUNT - 1) as f32;
-            let r = rect(
-                cx - QUICK_W * 0.5,
-                QUICK_Y,
-                cx + QUICK_W * 0.5,
-                QUICK_Y + QUICK_H,
-            );
-            let resp = widgets::preset_slot(
-                ui,
-                r,
-                &format!("{}", i + 1),
-                false,
-                &theme,
-                Id::new(("quick", i)),
-                Some(tr(Key::TipPresets)),
-            );
+        let quick_labels = self.bank.quick_labels();
+        let qresp = shell::quick_row(ui, &theme, lang, &quick_labels, "orm_bandpass");
+        for (i, resp) in qresp.into_iter().enumerate() {
             if resp.clicked {
                 self.load_slot(ctx, i);
             }
             if resp.save_here {
-                self.slots[i] = snapshot(&ctx.params());
+                let s = snapshot(&ctx.params());
+                self.bank.save(i, s);
             }
         }
 
         // fade 位置：8 档吸附
-        let quick_pos = self.quick as f64 / (QUICK_COUNT - 1) as f64;
+        let quick_pos = self.bank.quick as f64 / (QUICK_COUNT - 1) as f64;
         let fedit = widgets::fade_slider(
             ui,
             rect(FADE_L, FADE_Y0, FADE_R, FADE_Y1),
@@ -1393,23 +1262,23 @@ impl EditorUi<BandPassParams> for BandPassUi {
             Id::new("fade"),
             Some(tr(Key::TipFade)),
         );
+        if fedit.began {
+            self.push_undo(snapshot(&ctx.params()));
+        }
         if let Some(v) = fedit.value {
             let q = (v * (QUICK_COUNT - 1) as f64).round() as usize;
-            self.quick = q.min(QUICK_COUNT - 1);
-            let a = self.quick;
-            let b = (a + 1).min(QUICK_COUNT - 1);
-            let frac = if b > a { 0.0 } else { 0.0 };
-            let _ = frac;
-            let new_slot = self.slots[self.numbers[a] - 1].clone();
-            let before = snapshot(&ctx.params());
-            self.push_undo(before);
+            self.bank.quick = q.min(QUICK_COUNT - 1);
+            let a = self.bank.quick;
+            let Some(new_slot) = self.bank.slot(a).cloned() else { return; };
             self.start_fade(snapshot(&ctx.params()), new_slot);
-            self.current = a;
+            self.bank.current = a;
         }
 
         // ================= 弹出菜单 =================
         if let Some((kind, pos)) = self.menu {
             let mut keep = true;
+            let just_opened = !self.menu_armed;
+            self.menu_armed = true;
             let mut chosen: Option<(u32, f64, bool)> = None;
             egui::Area::new(Id::new("orm_menu"))
                 .order(egui::Order::Foreground)
@@ -1451,7 +1320,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
                                         )
                                         .clicked()
                                     {
-                                        chosen = Some((target.color_id(), c as f64 / 3.0, true));
+                                        chosen = Some((target.color_id(), c as f64, false));
                                         keep = false;
                                     }
                                 }
@@ -1474,27 +1343,33 @@ impl EditorUi<BandPassParams> for BandPassUi {
                             }
                             MenuKind::Preset(i) => {
                                 if ui.button(tr(Key::SaveHere)).clicked() {
-                                    self.slots[i] = snapshot(&ctx.params());
+                                    self.bank.save(i, snapshot(&ctx.params()));
                                     keep = false;
                                 }
                                 if ui.button(tr(Key::RestoreDefault)).clicked() {
-                                    self.slots[i] = defaults();
+                                    self.bank.slots[i] = Some(defaults());
                                     keep = false;
                                 }
                             }
                         }
                     });
                 });
-            if let Some((id, v, _b)) = chosen {
-                ctx.automate(id, v);
+            if let Some((id, v, normalized)) = chosen {
+                if normalized {
+                    ctx.automate(id, v);
+                } else {
+                    set_plain(ctx, id, v);
+                }
             }
-            if keep && ui.ctx().input(|i| i.pointer.any_click()) {
+            if keep && !just_opened && ui.ctx().input(|i| i.pointer.any_click()) {
                 keep = false;
             }
             if keep {
+                self.menu_armed = false;
                 self.menu = Some((kind, pos));
             } else {
                 self.menu = None;
+                self.menu_armed = false;
             }
         }
 
@@ -1566,7 +1441,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
                             let _ = bw;
                         }
                         TextKind::Fade => {
-                            self.quick = (v.round() as usize).min(QUICK_COUNT - 1);
+                            self.bank.quick = (v.round() as usize).min(QUICK_COUNT - 1);
                         }
                         TextKind::Freq(is_l) => {
                             let f = v.clamp(20.0, 20_000.0);
@@ -1594,7 +1469,7 @@ impl EditorUi<BandPassParams> for BandPassUi {
 
         // ================= 设置面板 =================
         if self.settings_open {
-            self.draw_settings(ui, &theme);
+            self.draw_settings(ui);
         }
     }
 
@@ -1646,248 +1521,22 @@ impl BandPassUi {
         let _ = bw;
     }
 
-    fn draw_settings(&mut self, ui: &mut egui::Ui, theme: &Theme) {
-        // 全屏遮罩 IColor(70,26,25,22) + 380×270 卡片（无音频设备版）
-        let full = rect(0.0, 0.0, UI_WIDTH, UI_HEIGHT);
-        ui.painter_at(full)
-            .rect_filled(full, 0, Color32::from_rgba_unmultiplied(26, 25, 22, 70));
-        let card = Rect::from_center_size(full.center(), Vec2::new(380.0, 270.0));
-        let pnt = ui.painter_at(card);
-        pnt.rect_filled(card, 0, theme.col_100());
-        pnt.rect_stroke(
-            card,
-            0,
-            egui::Stroke::new(1.0, theme.col_300()),
-            egui::StrokeKind::Inside,
-        );
-
-        let lang = self.lang;
-        let tr = move |k: Key| strings::tr(lang, k);
-        let l = card.left() + 20.0;
-        let r = card.right() - 20.0;
-        let bw = (r - l) / 2.0;
-
-        // 语言：标题 14..34、按钮 38..68
-        pnt.text(
-            Pos2::new(l, card.top() + 24.0),
-            Align2::LEFT_CENTER,
-            tr(Key::Language),
-            fonts::semibold(20.0),
-            theme.col_900(),
-        );
-        if widgets::flat_button(
+    fn draw_settings(&mut self, ui: &mut egui::Ui) {
+        if !self.settings_open {
+            return;
+        }
+        let res = shell::settings_card(
             ui,
-            rect(l, card.top() + 38.0, l + bw, card.top() + 68.0),
-            tr(Key::Chinese),
-            self.lang == Lang::Zh,
-            theme,
-            Id::new("set_zh"),
+            &mut self.theme,
+            &mut self.lang,
             None,
-        ) {
-            self.lang = Lang::Zh;
-            save_settings(&Settings {
-                lang: self.lang,
-                hue: self.theme.hue,
-                sat: self.theme.sat_max,
-                dark: self.theme.mode == ThemeMode::Dark,
-            });
+            "orm_bandpass",
+        );
+        if res.closed {
+            self.settings_open = false;
         }
-        if widgets::flat_button(
-            ui,
-            rect(l + bw, card.top() + 38.0, r, card.top() + 68.0),
-            "ENGLISH",
-            self.lang == Lang::En,
-            theme,
-            Id::new("set_en"),
-            None,
-        ) {
-            self.lang = Lang::En;
-            save_settings(&Settings {
-                lang: self.lang,
-                hue: self.theme.hue,
-                sat: self.theme.sat_max,
-                dark: self.theme.mode == ThemeMode::Dark,
-            });
-        }
-
-        // 主题：标题 80..100、按钮 104..134
-        pnt.text(
-            Pos2::new(l, card.top() + 90.0),
-            Align2::LEFT_CENTER,
-            tr(Key::Theme),
-            fonts::semibold(20.0),
-            theme.col_900(),
-        );
-        if widgets::flat_button(
-            ui,
-            rect(l, card.top() + 104.0, l + bw, card.top() + 134.0),
-            tr(Key::Dark),
-            self.theme.mode == ThemeMode::Dark,
-            theme,
-            Id::new("set_dark"),
-            None,
-        ) {
-            self.theme.mode = ThemeMode::Dark;
-            save_settings(&Settings {
-                lang: self.lang,
-                hue: self.theme.hue,
-                sat: self.theme.sat_max,
-                dark: true,
-            });
-        }
-        if widgets::flat_button(
-            ui,
-            rect(l + bw, card.top() + 104.0, r, card.top() + 134.0),
-            tr(Key::Light),
-            self.theme.mode == ThemeMode::Light,
-            theme,
-            Id::new("set_light"),
-            None,
-        ) {
-            self.theme.mode = ThemeMode::Light;
-            save_settings(&Settings {
-                lang: self.lang,
-                hue: self.theme.hue,
-                sat: self.theme.sat_max,
-                dark: false,
-            });
-        }
-
-        // 色相：标题 148..174（左色块 14 + 8 间隙），轨道 174..200
-        let hue_hdr_y = card.top() + 161.0;
-        let sw = rect(l, hue_hdr_y - 7.0, l + 14.0, hue_hdr_y + 7.0);
-        pnt.rect_filled(sw, 0, Theme::hsb(self.theme.hue, 0.85, 1.0));
-        pnt.text(
-            Pos2::new(l + 22.0, hue_hdr_y),
-            Align2::LEFT_CENTER,
-            tr(Key::Hue),
-            fonts::regular(20.0),
-            theme.col_900(),
-        );
-        let hue_val = format!("{}\u{00b0}", self.theme.hue);
-        pnt.text(
-            Pos2::new(r, hue_hdr_y),
-            Align2::RIGHT_CENTER,
-            &hue_val,
-            fonts::regular(20.0),
-            theme.col_700(),
-        );
-        let htrack = rect(l, card.top() + 185.0, r, card.top() + 189.0);
-        pnt.rect_filled(htrack, 2, theme.col_300());
-        let hn = ((self.theme.hue.saturating_sub(15)) as f32 / 345.0).clamp(0.0, 1.0);
-        let hx = htrack.left() + hn * htrack.width();
-        pnt.rect_filled(
-            Rect::from_min_max(htrack.min, Pos2::new(hx, htrack.max.y)),
-            2,
-            theme.col_500(),
-        );
-        pnt.circle_filled(Pos2::new(hx, htrack.center().y), 8.5, theme.col_100());
-        pnt.circle_filled(Pos2::new(hx, htrack.center().y), 7.0, theme.col_900());
-        let hresp = ui.interact(
-            rect(l, card.top() + 174.0, r, card.top() + 200.0),
-            Id::new("set_hue"),
-            Sense::click_and_drag(),
-        );
-        if hresp.dragged() || hresp.clicked() {
-            if let Some(pos) = ui.ctx().pointer_interact_pos() {
-                let n = ((pos.x - htrack.left()) / htrack.width()).clamp(0.0, 1.0);
-                let h = 15 + (n * 345.0 / 15.0).round() as u16 * 15;
-                self.theme.hue = h.min(360);
-            }
-        }
-
-        // 饱和度：标题 206..232（左色块竖分 4 段），轨道 232..258
-        let sat_hdr_y = card.top() + 219.0;
-        let sw = rect(l, sat_hdr_y - 7.0, l + 14.0, sat_hdr_y + 7.0);
-        let seg_h = 14.0 / 4.0;
-        for i in 0..4 {
-            let b = 1.0 - 0.25 * i as f32;
-            pnt.rect_filled(
-                rect(
-                    sw.left(),
-                    sw.top() + i as f32 * seg_h,
-                    sw.right(),
-                    sw.top() + (i + 1) as f32 * seg_h,
-                ),
-                0,
-                Theme::hsb(self.theme.hue, self.theme.sat_max as f32 / 100.0, b),
-            );
-        }
-        pnt.text(
-            Pos2::new(l + 22.0, sat_hdr_y),
-            Align2::LEFT_CENTER,
-            tr(Key::Saturation),
-            fonts::regular(20.0),
-            theme.col_900(),
-        );
-        let sat_key = match self.theme.sat_max {
-            0 => Key::SatNone,
-            15 => Key::SatLow,
-            30 => Key::SatMed,
-            _ => Key::SatHigh,
-        };
-        pnt.text(
-            Pos2::new(r, sat_hdr_y),
-            Align2::RIGHT_CENTER,
-            tr(sat_key),
-            fonts::regular(20.0),
-            theme.col_700(),
-        );
-        let st = rect(l, card.top() + 243.0, r, card.top() + 247.0);
-        pnt.rect_filled(st, 2, theme.col_300());
-        // 原版：旋钮位置按离散档位索引（0/1/2/3），而不是按百分比线性
-        const SAT_VALS: [u8; 4] = [0, 15, 30, 50];
-        let sat_idx = SAT_VALS
-            .iter()
-            .position(|&v| v == self.theme.sat_max)
-            .unwrap_or(3) as f32;
-        let sn = sat_idx / 3.0;
-        let sx = st.left() + sn * st.width();
-        pnt.rect_filled(
-            Rect::from_min_max(st.min, Pos2::new(sx, st.max.y)),
-            2,
-            theme.col_500(),
-        );
-        pnt.circle_filled(Pos2::new(sx, st.center().y), 8.5, theme.col_100());
-        pnt.circle_filled(Pos2::new(sx, st.center().y), 7.0, theme.col_900());
-        let sresp = ui.interact(
-            rect(l, card.top() + 232.0, r, card.top() + 258.0),
-            Id::new("set_sat_slider"),
-            Sense::click_and_drag(),
-        );
-        if sresp.dragged() || sresp.clicked() {
-            if let Some(pos) = ui.ctx().pointer_interact_pos() {
-                let n = ((pos.x - st.left()) / st.width()).clamp(0.0, 1.0);
-                // 原版 DragTo：lround(n*3) 取最近档
-                let sat = SAT_VALS[(n * 3.0).round() as usize];
-                self.theme.sat_max = sat;
-                save_settings(&Settings {
-                    lang: self.lang,
-                    hue: self.theme.hue,
-                    sat: sat,
-                    dark: self.theme.mode == ThemeMode::Dark,
-                });
-            }
-        }
-
-        // 点击卡片外关闭（原版 SetVisible(false)）
-        let outside = ui.interact(
-            rect(0.0, 0.0, UI_WIDTH, UI_HEIGHT),
-            Id::new("settings_bg"),
-            Sense::click(),
-        );
-        if outside.clicked() {
-            if let Some(pos) = ui.ctx().pointer_interact_pos() {
-                if !card.contains(pos) {
-                    self.settings_open = false;
-                    save_settings(&Settings {
-                        lang: self.lang,
-                        hue: self.theme.hue,
-                        sat: self.theme.sat_max,
-                        dark: self.theme.mode == ThemeMode::Dark,
-                    });
-                }
-            }
+        if res.changed || res.closed {
+            shell::save_settings("ORMBandPass.settings", self.lang, &self.theme);
         }
     }
 }

@@ -10,6 +10,7 @@ ORM 系列音频插件的 Rust 重写仓库，插件框架用 [truce](https://tr
 | 插件 | 状态 | 说明 |
 |---|---|---|
 | BandPass | 已复刻（DSP + 界面 + 交互） | 与原版 916×646 界面逐控件对齐，见下方对照 |
+| Fusion | 已并入（DSP 全量 + 新界面） | 原 `GRM-Rust/plugins/fusion` 迁入，DSP 与 11 个 parity 测试保留；界面按 BandPass 设计语言重做 |
 | Analyzer | 已复刻（DSP 四引擎 + 界面 + 交互） | 960×635 界面，STFT/VQT/PBT/RTA 四套引擎 + 电平/响度/声场显示，见下方对照 |
 | CombFilter | 后续用 Rust 重做 | C++ 版本为半成品 |
 | Narrator | 不在范围内 | TTS 引擎与 ROM 数据继续留在 C++ 仓库 |
@@ -31,7 +32,7 @@ ORM 系列音频插件的 Rust 重写仓库，插件框架用 [truce](https://tr
   （语言/主题/色相/饱和度），关闭设置面板即落盘。
 - **i18n**：中英全量字符串 + 系统语言探测；16 处 tooltip 与原版一一对应。
 
-对照截图：`docs/screenshots/bandpass-m5.png`（当前渲染，
+对照截图：`docs/screenshots/bandpass-m6.png`（当前渲染，
 `cargo run -p orm-bandpass --example shot` 生成 `target/bandpass-ui.png`）；
 `docs/screenshots/bandpass-m2.png`、`bandpass-m3.png` 保留早期骨架。
 `shot` 自己建 egui Context 并跑两帧，因为 egui 的字体定义要到下一帧才生效，
@@ -160,6 +161,31 @@ OpenRM-Rust/
 插件 crate 只做参数换算、块边界和 UI。这样 Analyzer、将来的 CombFilter 可以
 直接复用同一层，回归测试也不需要拉起插件框架。
 
+## Fusion（并入与重做）
+
+Fusion 的 DSP 来自原 `GRM-Rust/crates/grm-fusion-dsp`，迁移时只改了 crate 名
+（`openrm-fusion-dsp`），FFT/重叠/频段/反馈/延迟语义与 11 个 `fusion_parity` 测试
+原样保留。插件壳改名 `orm-fusion`，bundle id `orm.fusion`，fourcc `ORMF`。
+
+界面没有沿用 GRM 的原始排版，而是与 BandPass 共用同一套 916×646 外壳：
+
+- **共用组件**（`crates/openrm-ui/src/shell.rs`）：预设标题、4×4 预设槽、底部
+  quick 1–8、fade 轨道、撤销/重做/保存/读取图标行、ORM 标题区、设置卡片
+  （语言/主题/色相/饱和度 + 可选扩展区），以及 `value_row` / `compact_bar`。
+- **共用数据**（`crates/openrm-ui/src/preset.rs`）：24 槽 `PresetBank`（9–24 网格 +
+  1–8 quick、拖动交换编号）、100 步 `History`、预设切换的 `Fade`。
+- **共用字体**：Outfit 三档（Latin）+ OPPO Sans 4.0 三档（GB2312 中文子集），
+  `Mixed` 缺字不再出现方框；字号取整像素以改善中文抗锯齿。
+- Fusion 自己的部分：8 个 band 开关、时间×频率平面（X=时间、Y=频率，拖动中心改
+  时间/频率）、顶部 中心/延迟/长度/角度/幅度 读数、底部 幅度/反馈/声像/宽度
+  四个滑块、共用的 RANDOM（范围/速度/取色）、贴平面右缘的增益条、混合、FFT
+  尺寸设置（256…131k）。
+- 数据与 BandPass 对齐：`.orm` 24 槽预设表、`~/Library/Application Support/OpenRM/ORMFusion.settings`、
+  Cmd+单击存槽、右键存档/恢复默认、quick/fade 吸附、撤销重做。
+
+截图：`docs/screenshots/fusion-m3.png`（8 段全开）、`fusion-m3-dark.png`（深色主题）。
+BandPass 的当前渲染在 `docs/screenshots/bandpass-m6.png`。
+
 ## 构建与测试
 
 ```sh
@@ -172,6 +198,10 @@ cargo run -p orm-analyzer --example shot   # 渲染 Analyzer 界面截图（docs
 cargo truce run                # 独立运行，不需要 DAW
 cargo truce install --clap     # 装到 ~/Library/Audio/Plug-Ins/CLAP
 cargo truce install --vst3     # 装到 ~/Library/Audio/Plug-Ins/VST3
+cargo truce install --vst3 --au2 -p orm-bandpass   # VST3 + AU2
+cargo truce install --vst3 --au2 -p orm-fusion     # VST3 + AU2
+auval -v aufx ORMB OpRM        # BandPass AU 校验
+auval -v aufx ORMF OpRM        # Fusion AU 校验
 ```
 
 ## 移植验证基线

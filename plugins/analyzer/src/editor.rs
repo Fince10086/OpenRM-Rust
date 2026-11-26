@@ -406,6 +406,11 @@ pub fn create(params: Arc<AnalyzerParams>) -> Box<dyn Editor> {
 // ---------------------------------------------------------------------------
 
 impl EditorUi<AnalyzerParams> for AnalyzerUi {
+    fn opened(&mut self, _ctx: &PluginContext<AnalyzerParams>) {
+        self.font_stage = 0;
+        self.styled = false;
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PluginContext<AnalyzerParams>) {
         self.ensure_style(ui);
 

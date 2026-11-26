@@ -5,7 +5,15 @@
 //! 先露出来。这里在父 NSView 上先放一层和界面同色的普通 NSView，等
 //! Metal 首帧覆盖它即可。遮罩位于 baseview 子视图下方，不参与鼠标事件。
 
+use std::io::Write;
 use std::sync::Arc;
+
+fn trace(line: &str) {
+    let path = std::path::Path::new("/tmp/openrm-editor.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
 
 use egui::Color32;
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
@@ -60,26 +68,41 @@ impl Editor for MacFlashGuard {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
+        let ptr = match parent {
+            RawWindowHandle::AppKit(p) => p.cast::<std::ffi::c_void>(),
+            _ => std::ptr::null_mut(),
+        };
+        trace(&format!("flash open begin parent={ptr:p} main={}", objc2::MainThreadMarker::new().is_some()));
         self.remove_overlay();
         self.focus = None;
         let mut focus_parent = None;
-        if let RawWindowHandle::AppKit(ptr) = parent {
-            let raw = ptr.cast();
-            // 先记住宿主原来的 first responder，open 后好把键盘还回去。
-            let previous = super::focus::capture(raw);
-            focus_parent = Some((raw, previous));
-            self.overlay = unsafe { install_overlay(raw, self.background) };
+        // 少数宿主把 Editor::open 放在自己的 GUI 线程而不是 AppKit 主线程。
+        // 此时 NSView 操作会崩在 MainThreadMarker::expect 上，整个编辑器
+        // 根本走不到 inner.open；遮罩和焦点管理直接跳过，至少让 baseview 自己
+        // 去尝试（baseview 若也拒绝非主线程，会由 truce 的 FFI 防火墙接住）。
+        if objc2::MainThreadMarker::new().is_some() {
+            if let RawWindowHandle::AppKit(ptr) = parent {
+                let raw = ptr.cast();
+                // 先记住宿主原来的 first responder，open 后好把键盘还回去。
+                let previous = super::focus::capture(raw);
+                focus_parent = Some((raw, previous));
+                self.overlay = unsafe { install_overlay(raw, self.background) };
+                trace("flash overlay installed");
+            }
         }
         // 遮罩先挂上；预热已完成就回收线程，未完成也绝不在 open 里 join。
         // 这样 wgpu 初始化期间宿主看到的是界面底色，而不是被预热卡住。
         crate::gpu::wait();
+        trace("flash inner.open begin");
         self.inner.open(parent, context);
+        trace("flash inner.open done");
         if let Some((raw, previous)) = focus_parent {
             self.focus = super::focus::install(raw, previous);
         }
     }
 
     fn close(&mut self) {
+        trace("flash close");
         self.focus = None;
         self.remove_overlay();
         self.inner.close();
@@ -155,7 +178,9 @@ unsafe fn install_overlay(
     }
     let parent: &NSView = unsafe { &*(parent as *const NSView) };
     let frame = parent.bounds();
-    let mtm = MainThreadMarker::new().expect("编辑器必须在 AppKit 主线程创建");
+    let Some(mtm) = MainThreadMarker::new() else {
+        return None;
+    };
     let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
     view.setWantsLayer(true);
     view.setAutoresizingMask(

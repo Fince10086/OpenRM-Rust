@@ -419,6 +419,8 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     /// old truce dropped every frame forever when `from_window` returned
     /// `None`. Retry on the frame timer until it succeeds.
     last_recover_attempt: std::time::Instant,
+    /// 仅用于诊断日志：记录最初几帧的可见性/渲染器状态。
+    diag_frames: u8,
     /// Kept to rebuild on device loss: the custom font and visuals applied to
     /// a freshly recreated `egui::Context`.
     font: Option<&'static [u8]>,
@@ -817,6 +819,20 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             // `from_window`. Retry on the frame timer, and recreate the egui
             // context with it so the font atlas is re-emitted to the new
             // renderer.
+            if self.diag_frames < 4 {
+                self.diag_frames += 1;
+                use raw_window_handle::HasRawWindowHandle;
+                let handle = window.raw_window_handle();
+                let skip = truce_gui::platform::should_skip_frame(handle);
+                crate::diag::trace(format!(
+                    "on_frame #{} renderer={} skip={} handle={:?}",
+                    self.diag_frames,
+                    self.renderer.is_some(),
+                    skip,
+                    handle
+                ));
+            }
+
             #[cfg(not(target_os = "windows"))]
             if self.renderer.is_none() && self.last_recover_attempt.elapsed() >= std::time::Duration::from_millis(200) {
                 self.last_recover_attempt = std::time::Instant::now();
@@ -1543,6 +1559,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     last_cursor_pos: egui::Pos2::ZERO,
                     device_lost,
                     last_recover_attempt: std::time::Instant::now(),
+                    diag_frames: 0,
                     font,
                     visuals: handler_visuals,
                     param_ids,

@@ -1543,6 +1543,17 @@ fn nearest_band(views: &[BarView], plot: Rect, pos: Pos2) -> Option<usize> {
 }
 
 impl EditorUi<FusionParams> for FusionUi {
+    fn opened(&mut self, _ctx: &PluginContext<FusionParams>) {
+        // 每次打开都会新建一个 egui::Context，但 FusionUi 本身跨 open/close
+        // 复用。若沿用上一次的 font_stage=2，新 Context 从未 install 字体，
+        // 而 semibold() 仍返回 FontFamily::Name("Mixed-SemiBold")，首帧就会
+        // panic，宿主里表现为关闭再打开永久白屏。必须重置，让新 Context
+        // 重新走“首帧 install、次帧启用命名族”。
+        self.font_stage = 0;
+        self.styled = false;
+        self.last_time = 0.0;
+    }
+
     fn ui(&mut self, ui: &mut Ui, ctx: &PluginContext<FusionParams>) {
         let now = ui.input(|i| i.time);
         let dt = if self.last_time > 0.0 {

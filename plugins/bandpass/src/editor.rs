@@ -600,6 +600,14 @@ impl BandPassUi {
 }
 
 impl EditorUi<BandPassParams> for BandPassUi {
+    fn opened(&mut self, _ctx: &PluginContext<BandPassParams>) {
+        // 同 Fusion：UI 对象跨 open/close 复用，egui::Context 每次新建。
+        // 不重置 font_stage 会让新 Context 跳过字体安装，命名族不存在，
+        // 首帧 panic -> 白屏。
+        self.font_stage = 0;
+        self.styled = false;
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, ctx: &PluginContext<BandPassParams>) {
         self.ensure_style(ui);
 

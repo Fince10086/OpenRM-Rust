@@ -27,6 +27,11 @@ pub struct EguiRenderer {
     /// Shared with the editor handler: raised when wgpu reports the
     /// swapchain/device as lost, so `on_frame` can rebuild the renderer.
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Consecutive frames whose acquire still reported `Outdated` after
+    /// `configure()`. A view that is not composited yet (or a host that keeps
+    /// changing the child's drawable size) can do this; after a few frames we
+    /// rebuild the whole renderer/surface instead of silently spinning.
+    outdated_streak: u32,
 }
 
 /// Present mode for the editor's child-window swapchain.
@@ -74,8 +79,13 @@ impl EguiRenderer {
         if width == 0 || height == 0 {
             return None;
         }
+        crate::diag::trace(format!("renderer from_window begin {width}x{height}"));
         let instance = wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
-        let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }?;
+        let Some(surface) = (unsafe { crate::platform::create_wgpu_surface(&instance, window) }) else {
+            crate::diag::trace("renderer create_surface FAILED");
+            return None;
+        };
+        crate::diag::trace("renderer surface created");
         unsafe { Self::init_with_surface(&instance, surface, width, height, device_lost) }
     }
 
@@ -174,6 +184,7 @@ impl EguiRenderer {
             max_texture_dim,
             last_acquire_wait: std::time::Duration::ZERO,
             device_lost,
+            outdated_streak: 0,
         })
     }
 
@@ -281,6 +292,7 @@ impl EguiRenderer {
                 max_texture_dim,
                 last_acquire_wait: std::time::Duration::ZERO,
                 device_lost: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                outdated_streak: 0,
             })
         }
     }
@@ -330,19 +342,35 @@ impl EguiRenderer {
             self.surface.configure(&self.device, &self.surface_config);
             acquired = self.surface.get_current_texture();
             self.last_acquire_wait += acquire_start.elapsed();
+            crate::diag::trace(format!("render acquire after reconfigure: {:?}", acquired));
         }
 
         let frame = match acquired {
             wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.outdated_streak = 0;
+                frame
+            }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.device_lost
                     .store(true, std::sync::atomic::Ordering::Release);
                 return;
             }
-            // `Outdated` again after reconfigure: let the next on_frame try
-            // once more. `Timeout` means the compositor has no drawable yet;
-            // dropping this frame is correct, the timer will retry.
+            // `Outdated` again after reconfigure: increment the streak and,
+            // after a few frames, have `on_frame` drop this renderer entirely
+            // and create a fresh surface. This is the case where the host
+            // attached/resized the child after our first `configure`, so
+            // reconfiguring the same (stale) size can never catch up.
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.outdated_streak = self.outdated_streak.saturating_add(1);
+                if self.outdated_streak >= 3 {
+                    self.device_lost
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                return;
+            }
+            // `Timeout` means the compositor has no drawable yet; dropping
+            // this frame is correct, the timer will retry.
             _ => return,
         };
         let frame_view = frame

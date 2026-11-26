@@ -33,4 +33,3 @@ truce-test = "6.3.0"
 png = "0.17"
 egui-wgpu = { version = "=0.34.3", default-features = false }
 wgpu = { version = "=29.0.4", default-features = false, features = ["wgsl"] }
-pollster = "0.4"

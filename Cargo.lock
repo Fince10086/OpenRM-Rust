@@ -1688,7 +1688,6 @@ dependencies = [
  "openrm-fusion-dsp",
  "openrm-ui",
  "png 0.17.16",
- "pollster",
  "rfd",
  "serde_json",
  "truce",
@@ -2589,8 +2588,6 @@ dependencies = [
 [[package]]
 name = "truce-egui"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "679ecc5a8cfae4884d0b9da56a3eab33cce11148a57e416755b0d1eb3758d9ff"
 dependencies = [
  "baseview-truce",
  "egui",
@@ -2655,8 +2652,6 @@ dependencies = [
 [[package]]
 name = "truce-gui-utils"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ab60ef3a723bc0e1e94778bc36443b25d8613b31809856daeaf58b706bb806"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",

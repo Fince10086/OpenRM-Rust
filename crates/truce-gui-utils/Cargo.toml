@@ -1,0 +1,14 @@
+[package]
+name = "truce-gui-utils"
+version = "6.3.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "OpenRM local shim: keep truce's host-side helpers, but let an embedded editor paint its first frames before macOS reports the host window visible."
+publish = false
+
+[dependencies]
+objc = "0.2"
+raw-window-handle = "0.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }

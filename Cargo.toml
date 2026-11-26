@@ -23,3 +23,10 @@ codegen-units = 1
 
 [profile.release.package."*"]
 opt-level = 3
+
+[patch.crates-io]
+# 让渲染器在宿主窗口刚出现、macOS 还没把 NSWindowOcclusionStateVisible
+# 置位时也能先画前几帧；否则 truce 会在 on_frame 开头直接丢弃整个帧，
+# 表现为打开插件后一段纯白/空白，重开时尤其明显。
+truce-gui-utils = { path = "crates/truce-gui-utils" }
+truce-egui = { path = "vendor/truce-egui" }

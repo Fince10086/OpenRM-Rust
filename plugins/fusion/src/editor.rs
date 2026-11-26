@@ -4,12 +4,17 @@
 //! 随机 + 混合 + 图标行 + 标题区，底部 8 个 quick 槽与 fade 轨道。
 //! 中间是 Fusion 自己的“时间 × 频率”平面和 8 个频段的参数。
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use egui::{Align2, CursorIcon, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{
+    Align2, Color32, ColorImage, CursorIcon, Id, Pos2, Rect, Sense, Stroke, TextureOptions, Ui, Vec2,
+};
+use openrm_dsp::spectrum::{PadSpectrum, SPECTRUM_BANDS};
 use openrm_ui::{
     fonts,
     preset::{Fade, History, PresetBank, QUICK_COUNT, SLOT_COUNT},
+    native_menu,
     shell,
     strings::{self, Key, Lang},
     theme::{rgba, Theme},
@@ -25,11 +30,12 @@ pub const W: f32 = openrm_ui::UI_WIDTH;
 pub const H: f32 = openrm_ui::UI_HEIGHT;
 
 /// 画布左侧：频段区 + 平面；增益条紧接着平面右缘。
-const PAD: (f32, f32, f32, f32) = (20.0, 64.0, 668.0, 372.0);
-const GAIN: (f32, f32, f32, f32) = (672.0, 64.0, 730.0, 372.0);
+const PAD: (f32, f32, f32, f32) = (20.0, 64.0, 668.0, 480.0);
+const GAIN: (f32, f32, f32, f32) = (672.0, 64.0, 730.0, 480.0);
 const PLOT_TOP: f32 = 112.0;
-const PARAM_TOP: f32 = 380.0;
-const ROW_H: f32 = 34.0;
+const PARAM_TOP: f32 = 488.0;
+const FIELD_W: f32 = 161.0;
+const FIELD_GAP: f32 = 8.0;
 
 fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
     Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
@@ -57,6 +63,106 @@ const P_RANDOM_ON: u32 = 90;
 const P_RANDOM_RANGE: u32 = 91;
 const P_RANDOM_SPEED: u32 = 92;
 const P_RANDOM_COLOR: u32 = 93;
+
+const SPEC_FFT: usize = 4096;
+const SPEC_OVERLAP: usize = 4;
+const SPEC_HOP: usize = SPEC_FFT / SPEC_OVERLAP;
+const SPECTRUM_FLOOR_DB: f32 = -90.0;
+
+/// XY Pad 下方的输入频谱瀑布：最新的频谱在最右侧，随时间向左滚动。
+struct FusionSpectrumUi {
+    sr: f64,
+    pad: PadSpectrum,
+    pending: Vec<f32>,
+    history: VecDeque<[f32; SPECTRUM_BANDS]>,
+    cols: usize,
+    texture: Option<egui::TextureHandle>,
+    dirty: bool,
+}
+
+impl FusionSpectrumUi {
+    fn new(sr: f64) -> Self {
+        let cols = (10.0 * sr / SPEC_HOP as f64).round().clamp(160.0, 1200.0) as usize;
+        let mut history = VecDeque::with_capacity(cols);
+        for _ in 0..cols {
+            history.push_back([SPECTRUM_FLOOR_DB; SPECTRUM_BANDS]);
+        }
+        Self {
+            sr,
+            pad: PadSpectrum::new(sr, SPEC_FFT, SPEC_OVERLAP),
+            pending: Vec::with_capacity(SPEC_HOP * 8),
+            history,
+            cols,
+            texture: None,
+            dirty: true,
+        }
+    }
+
+    fn pump(&mut self, tap: &truce::core::audio_tap::AudioTap<f32>) {
+        let pending = &mut self.pending;
+        tap.drain_with(|frames| {
+            pending.extend_from_slice(frames);
+        });
+        let mut l = Vec::with_capacity(SPEC_HOP);
+        let mut r = Vec::with_capacity(SPEC_HOP);
+        while self.pending.len() >= SPEC_HOP * 2 {
+            let chunk: Vec<f32> = self.pending.drain(..SPEC_HOP * 2).collect();
+            l.clear();
+            r.clear();
+            for f in chunk.chunks_exact(2) {
+                l.push(f[0]);
+                r.push(f[1]);
+            }
+            self.pad.push_hop(&l, &r);
+            let mut col = [0.0f32; SPECTRUM_BANDS];
+            for (b, v) in col.iter_mut().enumerate() {
+                let amp = self.pad.band_max[0][b].max(self.pad.band_max[1][b]);
+                *v = if amp > 1e-9 {
+                    (20.0 * amp.log10()).max(SPECTRUM_FLOOR_DB)
+                } else {
+                    SPECTRUM_FLOOR_DB
+                };
+            }
+            self.history.pop_front();
+            self.history.push_back(col);
+            self.dirty = true;
+        }
+    }
+
+    fn texture(&mut self, ctx: &egui::Context, theme: &Theme) -> Option<&egui::TextureHandle> {
+        if !self.dirty && self.texture.is_some() {
+            return self.texture.as_ref();
+        }
+        // 频谱是灰色底纹：浅色主题用深灰，深色主题用浅灰，避免看不见。
+        let base = if theme.col_100().r() < 128 {
+            Color32::from_gray(195)
+        } else {
+            Color32::from_gray(90)
+        };
+        let mut pixels = vec![Color32::TRANSPARENT; self.cols * SPECTRUM_BANDS];
+        for (x, col) in self.history.iter().enumerate() {
+            for (b, db) in col.iter().enumerate() {
+                let t = ((*db - SPECTRUM_FLOOR_DB) / 70.0).clamp(0.0, 1.0);
+                if t <= 0.0 {
+                    continue;
+                }
+                let alpha = ((0.03 + 0.34 * t.powf(1.35)) * 255.0) as u8;
+                let idx = (SPECTRUM_BANDS - 1 - b) * self.cols + x;
+                pixels[idx] = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+            }
+        }
+        let image = ColorImage::new([self.cols, SPECTRUM_BANDS], pixels);
+        match self.texture.as_mut() {
+            Some(tex) => tex.set(image, TextureOptions::LINEAR),
+            None => {
+                self.texture =
+                    Some(ctx.load_texture("fusion_input_spectrum", image, TextureOptions::LINEAR));
+            }
+        }
+        self.dirty = false;
+        self.texture.as_ref()
+    }
+}
 
 #[derive(Clone, Copy, Default)]
 struct BarView {
@@ -104,6 +210,7 @@ pub struct FusionUi {
     menu: Option<(MenuKind, Pos2)>,
     menu_armed: bool,
     pad_drag: Option<usize>,
+    spectrum: Option<FusionSpectrumUi>,
     editing: Vec<u32>,
 }
 
@@ -132,6 +239,7 @@ impl Default for FusionUi {
             menu: None,
             menu_armed: false,
             pad_drag: None,
+            spectrum: None,
             editing: Vec::new(),
         }
     }
@@ -253,16 +361,15 @@ fn bar_endpoints(b: &BarView) -> (f32, f32, f32, f32) {
     )
 }
 
-/// X 轴：1 ms 在左，10 s 在右（对数）；Y 轴：0 Hz 在底，Nyquist 在顶。
+/// X 轴：左侧 10 s、右侧 0 s，线性；Y 轴：20 Hz…24 kHz 对数。
 fn pad_point(pad: Rect, f: f32, a: f32) -> Pos2 {
-    let ms = 1.0 + a.clamp(0.0, 1.0) * 9_999.0;
-    let lx = (ms.ln() / 10_000f32.ln()).clamp(0.0, 1.0);
+    let x = pad.right() - a.clamp(0.0, 1.0) * pad.width();
     // 频率参数到 Hz 是平方关系（f²·Nyquist）。Y 轴用 20 Hz…24 kHz 的对数
     // 刻度：否则 375 Hz 的频段会挤在底边，整块平面几乎空着。
     let hz = f.clamp(0.0, 1.0).powi(2) * 24_000.0;
     let y = (hz.max(20.0) / 20.0).ln() / (24_000f32 / 20.0).ln();
     Pos2::new(
-        pad.left() + lx * pad.width(),
+        x,
         pad.bottom() - y.clamp(0.0, 1.0) * pad.height(),
     )
 }
@@ -397,7 +504,7 @@ impl FusionUi {
     }
 
     fn bar_view(&self, ctx: &PluginContext<FusionParams>, i: usize) -> BarView {
-        let (amp, fb, delay, freq, length, angle, pan, width, active, mute) = bar_ids(i);
+        let (amp, fb, delay, freq, length, angle, pan, width, active, _mute) = bar_ids(i);
         let p = ctx.params();
         BarView {
             amp: p.get_plain(amp).unwrap_or(0.0) as f32,
@@ -409,7 +516,8 @@ impl FusionUi {
             pan: p.get_plain(pan).unwrap_or(0.0) as f32,
             width: p.get_plain(width).unwrap_or(0.0) as f32,
             active: p.get_plain(active).unwrap_or(0.0) >= 0.5,
-            mute: p.get_plain(mute).unwrap_or(0.0) >= 0.5,
+            // 静音功能已移除；旧的 Mute 参数不再影响显示与 DSP。
+            mute: false,
         }
     }
 
@@ -685,7 +793,7 @@ impl FusionUi {
             pnt.rect_filled(
                 rect(r.left(), r.bottom() - 3.0, r.right(), r.bottom()),
                 0,
-                if bv.active && !bv.mute {
+                if bv.active {
                     Theme::random_color(i % 4)
                 } else {
                     Theme::random_color_dim(i % 4)
@@ -706,13 +814,10 @@ impl FusionUi {
                     egui::StrokeKind::Inside,
                 );
             }
-            // 1–8 只作为启用开关，不再承担选择职责；选择请点击平面里的频段线。
+            // 1–8 只作为启用开关；选择通过点击平面里的频段线完成。
             if resp.clicked() {
                 self.history.push(snapshot(&ctx.params()));
                 click_param(ctx, ACT0 + i as u32, if bv.active { 0.0 } else { 1.0 });
-                if !bv.active && bv.mute {
-                    click_param(ctx, MUTE0 + i as u32, 0.0);
-                }
             }
         }
 
@@ -727,46 +832,6 @@ impl FusionUi {
         ) {
             ctx.params().host.request_reset();
         }
-        if widgets::flat_button(
-            ui,
-            rect(358.0, y0, 408.0, y1),
-            self.tr(Key::Mute),
-            false,
-            &theme,
-            Id::new("fusion_mute_all"),
-            Some(self.tr(Key::TipMute)),
-        ) {
-            let all_muted = (0..8).all(|i| {
-                let bv = self.bar_view(ctx, i);
-                !bv.active || bv.mute
-            });
-            let target = if all_muted { 0.0 } else { 1.0 };
-            for i in 0..8 {
-                click_param(ctx, MUTE0 + i as u32, target);
-            }
-        }
-
-        let pnt = ui.painter_at(rect(0.0, 0.0, W, H));
-        pnt.text(
-            Pos2::new(430.0, (y0 + y1) * 0.5),
-            Align2::CENTER_CENTER,
-            format!("{}", self.selected + 1),
-            fonts::bold(34.0),
-            theme.col_900(),
-        );
-        let b = self.bar_view(ctx, self.selected);
-        if widgets::flat_button(
-            ui,
-            rect(458.0, y0, 514.0, y1),
-            if b.active { self.tr(Key::On) } else { self.tr(Key::Off) },
-            b.active,
-            &theme,
-            Id::new("fusion_active"),
-            Some(self.tr(Key::TipActivate)),
-        ) {
-            self.history.push(snapshot(&ctx.params()));
-            click_param(ctx, ACT0 + self.selected as u32, if b.active { 0.0 } else { 1.0 });
-        }
     }
 
     // ===== 中央 时间 × 频率 平面 =====
@@ -777,93 +842,92 @@ impl FusionUi {
         let p = ui.painter_at(area);
         p.rect_filled(area, 0, theme.col_100());
 
-        // 顶部参数条：中心 / 延迟 / 长度 / 角度 / 幅度
+        // 顶部四个参数：与底部四个同一套 value_row，紧贴平面顶部。
         let b = self.bar_view(ctx, self.selected);
         let sr = ctx.params().host.sample_rate();
-        let sw = rect(20.0, 70.0, 34.0, 84.0);
-        p.rect_filled(sw, 0, Theme::random_color(self.selected % 4));
-        p.text(
-            Pos2::new(41.0, 77.0),
-            Align2::LEFT_CENTER,
-            format!("{} {}", self.tr(Key::Band), self.selected + 1),
-            fonts::bold(18.0),
-            theme.col_900(),
-        );
-
-        let fields: [(Rect, Key, u32, f64, String); 5] = [
+        let fields: [(Key, u32, f64, String); 4] = [
             (
-                rect(108.0, 66.0, 226.0, 98.0),
                 Key::Center,
                 FREQ0,
                 b.freq as f64,
                 format!("{} Hz", display_freq(b.freq, sr)),
             ),
             (
-                rect(232.0, 66.0, 338.0, 98.0),
                 Key::Delay,
                 DELAY0,
                 b.delay as f64,
                 format!("{:.2}s", delay_sec(b.delay)),
             ),
             (
-                rect(344.0, 66.0, 428.0, 98.0),
                 Key::Length,
                 LEN0,
                 (b.length * 2.0) as f64,
                 format!("{:.0}%", b.length * 200.0),
             ),
             (
-                rect(434.0, 66.0, 506.0, 98.0),
                 Key::Angle,
                 ANG0,
                 b.angle as f64,
                 format!("{:.0}°", b.angle * 180.0),
             ),
-            (
-                rect(512.0, 66.0, 652.0, 98.0),
-                Key::Amplitude,
-                AMP0,
-                b.amp as f64,
-                format!("{:.0} dB", 20.0 * amplitude_from_slider(b.amp).log10()),
-            ),
         ];
-        for (i, (r, key, base, norm, text)) in fields.iter().enumerate() {
+        for (i, (key, base, norm, text)) in fields.iter().enumerate() {
             let label = self.tr(*key);
-            let edit = shell::value_field(
+            let x0 = area.left() + i as f32 * (FIELD_W + FIELD_GAP);
+            let r = rect(x0, 66.0, x0 + FIELD_W, 96.0);
+            if let Some(v) = shell::value_row(
                 ui,
-                *r,
+                r,
                 label,
                 text,
                 *norm,
                 &theme,
                 Id::new(("fusion_top", i)),
                 None,
-            );
-            if edit.began {
+            ) {
                 if self.random_on(ctx) {
                     self.stop_random(ctx);
                 }
                 self.begin_param(ctx, *base + self.selected as u32);
-            }
-            if let Some(v) = edit.value {
-                let id = *base + self.selected as u32;
                 let value = match i {
                     2 => (v * 0.5).clamp(0.0, 0.5),
                     _ => v,
                 };
-                write_param(ctx, id, value);
+                write_param(ctx, *base + self.selected as u32, value);
             }
         }
 
         let plot = rect(area.left(), PLOT_TOP, area.right(), area.bottom());
-        // X 轴时间：按十倍程画竖纹
-        let cells = 16;
+        let need_spec = self
+            .spectrum
+            .as_ref()
+            .map_or(true, |sp| (sp.sr - sr as f64).abs() > 0.5);
+        if need_spec {
+            self.spectrum = Some(FusionSpectrumUi::new(sr as f64));
+        }
+        if let Some(sp) = self.spectrum.as_mut() {
+            sp.pump(&ctx.params().host.tap);
+        }
+        // X 轴时间：线性 10s→0，等距竖纹。
+        let cells = 8;
         for i in 0..cells {
             let x0 = plot.left() + plot.width() * i as f32 / cells as f32;
             let x1 = plot.left() + plot.width() * (i + 1) as f32 / cells as f32;
             let v = if i % 2 == 0 { 236.0 } else { 228.0 } + if i % 4 == 0 { 4.0 } else { 0.0 };
             p.rect_filled(rect(x0, plot.top(), x1, plot.bottom()), 0, theme.warm_gray(v as u8));
         }
+        // 输入频谱：20 Hz–20 kHz 的灰色瀑布，最新列在最右侧。
+        if let Some(tex) = self.spectrum.as_mut().and_then(|sp| sp.texture(ui.ctx(), &theme)) {
+            let n20 = (20_000f32 / 20.0).ln() / (24_000f32 / 20.0).ln();
+            let spec_top = plot.bottom() - n20 * plot.height();
+            p.image(
+                tex.id(),
+                rect(plot.left(), spec_top, plot.right(), plot.bottom()),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+
         // 频率横线 100 / 1k / 6k / 12k / 24k（对数）
         for hz in [100.0f32, 1000.0, 6000.0, 12000.0, 24_000.0] {
             let n = (hz / 20.0).ln() / (24_000f32 / 20.0).ln();
@@ -873,7 +937,7 @@ impl FusionUi {
                 Stroke::new(1.0_f32, theme.col_300()),
             );
         }
-        // 时间竖线 1ms / 10ms / 100ms / 1s / 10s
+        // 时间竖线：10s / 7.5s / 5s / 2.5s / 0s（线性）
         for i in 0..=4 {
             let x = plot.left() + plot.width() * i as f32 / 4.0;
             p.line_segment(
@@ -947,9 +1011,8 @@ impl FusionUi {
             }
         }
 
-        // 轴标只留刻度：1ms…10s 与 100…24k。原先左上角的长句会和
-        // 12k/6k 刻度叠在一起，悬停提示里已经写明 X=时间 / Y=频率。
-        for (i, label) in ["1ms", "10ms", "100ms", "1s", "10s"].iter().enumerate() {
+        // 轴标只留刻度：10s…0s 与 100…24k。
+        for (i, label) in ["10s", "7.5s", "5s", "2.5s", "0s"].iter().enumerate() {
             let x = plot.left() + plot.width() * i as f32 / 4.0;
             p.text(
                 Pos2::new(x + if i == 0 { 2.0 } else { 0.0 }, plot.bottom() - 4.0),
@@ -1041,9 +1104,8 @@ impl FusionUi {
             if let (Some(i), Some(pos)) = (self.pad_drag, ui.ctx().pointer_interact_pos()) {
                 let fx = ((pos.y - plot.top()) / plot.height()).clamp(0.0, 1.0);
                 let tx = ((pos.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
-                // X 轴是对数时间：指针位置要按 10^4 反算回 ms。
-                let ms = 10f32.powf(4.0 * tx);
-                let a = ((ms - 1.0) / 9_999.0).clamp(0.0, 1.0);
+                // X 轴左侧 10s、右侧 0s，线性映射。
+                let a = (1.0 - tx).clamp(0.0, 1.0);
                 // Y 轴是 20 Hz…24 kHz 对数刻度；反算回参数 sqrt(Hz/24k)。
                 let hz = 20.0 * (24_000f32 / 20.0).powf(1.0 - fx);
                 let f = (hz / 24_000.0).sqrt();
@@ -1062,15 +1124,20 @@ impl FusionUi {
         let theme = self.theme;
         let b = self.bar_view(ctx, self.selected);
         let rows: [(Key, u32, f64, String); 4] = [
-            (Key::Amplitude, AMP0, b.amp as f64, format!("{:.0} dB", 20.0 * amplitude_from_slider(b.amp).log10())),
+            (
+                Key::Amplitude,
+                AMP0,
+                b.amp as f64,
+                format!("{:.0} dB", 20.0 * amplitude_from_slider(b.amp).log10()),
+            ),
             (Key::Feedback, FB0, b.fb as f64, format!("{:.0}%", b.fb * 100.0)),
             (Key::Pan, PAN0, b.pan as f64, format!("{:+.2}", b.pan - 0.5)),
             (Key::Width, WID0, b.width as f64, format!("{:.0}%", b.width * 100.0)),
         ];
+        // 四个参数单行从左到右，与顶部四个使用同一套 value_row。
         for (n, (key, base, norm, text)) in rows.iter().enumerate() {
-            let y = PARAM_TOP + n as f32 * ROW_H;
-            let id = base + self.selected as u32;
-            let r = rect(20.0, y, 688.0, y + 30.0);
+            let x0 = 20.0 + n as f32 * (FIELD_W + FIELD_GAP);
+            let r = rect(x0, PARAM_TOP, x0 + FIELD_W, PARAM_TOP + 30.0);
             let label = self.tr(*key);
             if let Some(v) = shell::value_row(
                 ui,
@@ -1085,6 +1152,7 @@ impl FusionUi {
                 if self.random_on(ctx) {
                     self.stop_random(ctx);
                 }
+                let id = base + self.selected as u32;
                 self.begin_param(ctx, id);
                 write_param(ctx, id, v);
             }
@@ -1314,6 +1382,60 @@ impl FusionUi {
 
     fn menu(&mut self, ctx: &PluginContext<FusionParams>, ui: &mut Ui) {
         let Some((kind, pos)) = self.menu else { return };
+
+        // 优先使用系统 NSMenu：点击外部关闭、键盘导航、外观都由 AppKit
+        // 负责。非 macOS 上 popup 返回 Unsupported，保留下面的 egui 弹层。
+        let items = match kind {
+            MenuKind::Preset(_) => vec![
+                native_menu::MenuItem::new(self.tr(Key::SaveHere)),
+                native_menu::MenuItem::new(self.tr(Key::RestoreDefault)),
+            ],
+            MenuKind::RandomColor => {
+                let current = self.random_color(ctx);
+                let labels = [
+                    self.tr(Key::Red),
+                    self.tr(Key::Yellow),
+                    self.tr(Key::Blue),
+                    self.tr(Key::Green),
+                ];
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, label)| native_menu::MenuItem {
+                        label: *label,
+                        checked: i == current,
+                        enabled: true,
+                    })
+                    .collect()
+            }
+        };
+        match native_menu::popup(&items) {
+            native_menu::PopupResult::Selected(i) => {
+                self.menu = None;
+                self.menu_armed = false;
+                match kind {
+                    MenuKind::Preset(idx) => {
+                        if i == 0 {
+                            self.bank.save(idx, snapshot(&ctx.params()));
+                        } else if i == 1 {
+                            let defaults = defaults();
+                            self.bank.slots[self.bank.numbers[idx] - 1] = Some(defaults);
+                        }
+                    }
+                    MenuKind::RandomColor => {
+                        write_param(ctx, P_RANDOM_COLOR, i as f64);
+                    }
+                }
+                return;
+            }
+            native_menu::PopupResult::Dismissed => {
+                self.menu = None;
+                self.menu_armed = false;
+                return;
+            }
+            native_menu::PopupResult::Unsupported => {}
+        }
+
         let mut keep = true;
         let just_opened = !self.menu_armed;
         self.menu_armed = true;
@@ -1454,9 +1576,9 @@ impl EditorUi<FusionParams> for FusionUi {
         if !ui.input(|i| i.pointer.any_down()) && !rnd {
             self.last_idle = snapshot(&ctx.params());
         }
-        if rnd || self.fade.is_some() {
-            // 随机目标球/预设渐变是连续动画，必须持续请求下一帧。
-            ui.ctx().request_repaint();
+        if rnd || self.fade.is_some() || self.spectrum.is_some() {
+            // 随机目标球/预设渐变/频谱瀑布都是连续动画，必须持续请求下一帧。
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         }
 
         self.header(ctx, ui);
@@ -1467,6 +1589,8 @@ impl EditorUi<FusionParams> for FusionUi {
         self.menu(ctx, ui);
         self.settings(ctx, ui);
         self.finish_edits(ui, ctx);
+        // Fusion 没有文本输入框：始终让宿主持有键盘焦点。
+        openrm_ui::focus::set_text_focus(false);
     }
 
     fn state_changed(&mut self, ctx: &PluginContext<FusionParams>) {
@@ -1531,5 +1655,29 @@ mod tests {
         assert!((0.0..=1.0).contains(&f2));
         assert!((0.0..=1.0).contains(&a1));
         assert!((0.0..=1.0).contains(&a2));
+    }
+
+    #[test]
+    fn x_axis_is_linear_with_ten_seconds_on_the_left() {
+        let pad = rect(0.0, 0.0, 100.0, 100.0);
+        assert!((pad_point(pad, 0.0, 0.0).x - 100.0).abs() < 0.01);
+        assert!((pad_point(pad, 0.0, 1.0).x - 0.0).abs() < 0.01);
+        assert!((pad_point(pad, 0.0, 0.5).x - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn spectrum_history_gets_audio_energy() {
+        let tap = truce::core::audio_tap::AudioTap::<f32>::default();
+        let mut sp = FusionSpectrumUi::new(48_000.0);
+        let mut frames = Vec::new();
+        for n in 0..(SPEC_HOP * 4) {
+            let s = (std::f32::consts::TAU * 1000.0 * n as f32 / 48_000.0).sin();
+            frames.push(s);
+            frames.push(s);
+        }
+        tap.push_frames(&frames);
+        sp.pump(&tap);
+        let last = sp.history.back().expect("history");
+        assert!(last.iter().any(|db| *db > -60.0), "{last:?}");
     }
 }

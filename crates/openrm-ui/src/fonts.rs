@@ -48,22 +48,30 @@ pub fn definitions() -> FontDefinitions {
             .insert(name.to_owned(), Arc::new(FontData::from_static(data)));
     }
 
-    // 默认（Regular）作为正文字体，放在 Proportional 家族首位。
-    let proportional = defs.families.entry(FontFamily::Proportional).or_default();
-    proportional.insert(0, "cjk-regular".to_owned());
-    proportional.push("mixed-regular".to_owned());
+    // 拉丁字符必须排在中文字体之前：OPPO Sans 不含拉丁，但 egui 的默认
+    // Proportional 家族会排在后面；若把 Outfit 放到默认字体之后，标准字重
+    // 的英文/数字会先命中 egui 自带的 Ubuntu。这里显式重排，再把 egui 的
+    // 默认字体放到末尾兜底箭头/符号。
+    let fallback = defs
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    let mut proportional = vec!["mixed-regular".to_owned(), "cjk-regular".to_owned()];
+    proportional.extend(fallback);
+    defs.families.insert(FontFamily::Proportional, proportional);
 
     defs.families.insert(
         FontFamily::Name(FAMILY_SEMI_BOLD.into()),
         vec![
-            "cjk-semibold".to_owned(),
             "mixed-semibold".to_owned(),
+            "cjk-semibold".to_owned(),
             "mixed-regular".to_owned(),
         ],
     );
     defs.families.insert(
         FontFamily::Name(FAMILY_BOLD.into()),
-        vec!["cjk-bold".to_owned(), "mixed-bold".to_owned(), "mixed-semibold".to_owned()],
+        vec!["mixed-bold".to_owned(), "cjk-bold".to_owned(), "mixed-semibold".to_owned()],
     );
 
     defs

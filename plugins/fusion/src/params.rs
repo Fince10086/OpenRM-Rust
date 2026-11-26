@@ -37,6 +37,8 @@ use std::sync::Arc;
 pub struct HostInfo {
     sample_rate: AtomicU32,
     reset_generation: AtomicU32,
+    /// 音频线程写入、UI 线程读取的干信号环形队列（显示输入频谱）。
+    pub tap: Arc<AudioTap<f32>>,
 }
 
 impl HostInfo {

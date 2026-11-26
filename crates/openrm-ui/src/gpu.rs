@@ -31,8 +31,10 @@ pub fn prewarm() {
     let _ = &PREWARM;
 }
 
-/// 编辑器 open 前等待后台预热结束。这样不会和真正 open 同时建两套
-/// device/管线；如果预热已经完成，这里只是取走一个已结束的 JoinHandle。
+/// 编辑器 open 前清理预热线程。**绝不阻塞 open**：用户点开界面时预热带
+/// 可能还没跑完，join 会把编辑器打开拖成明显的白屏等待。预热只是一个
+/// 缓存优化；若已经结束就 join 回收，否则直接脱离线程，让 open 立刻走
+/// 自己的 wgpu 路径。
 pub fn wait() {
     #[cfg(target_os = "macos")]
     if let Some(slot) = PREWARM_THREAD.get() {
@@ -41,7 +43,9 @@ pub fn wait() {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         if let Some(handle) = handle {
-            let _ = handle.join();
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
         }
     }
 }

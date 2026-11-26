@@ -9,6 +9,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Vec2};
 use openrm_ui::{
     fonts,
+    native_menu,
     preset::PresetBank,
     shell,
     strings::{self, Key, Lang},
@@ -651,6 +652,11 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if random_anim || self.fade.is_some() {
             ui.ctx().request_repaint();
         }
+        // 频谱由音频线程持续写入；egui 只在鼠标事件/参数变化时重绘，会
+        // 导致频谱只在鼠标移动时前进。这里按 30fps 持续刷新。
+        if self.spectrum.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+        }
 
         // ================= 左半：两个滤波垫 + 带宽滑杆 + 增益条 =================
         for (is_l, pad_t, band_t, gain_t) in [
@@ -1276,6 +1282,88 @@ impl EditorUi<BandPassParams> for BandPassUi {
 
         // ================= 弹出菜单 =================
         if let Some((kind, pos)) = self.menu {
+            // 系统 NSMenu 优先：点击菜单外关闭、键盘导航和外观都交给 AppKit。
+            let (labels, checked): (&[&str], Option<usize>) = match kind {
+                MenuKind::Slope(is_l) => {
+                    let cur = if is_l {
+                        p.slope_l.index()
+                    } else {
+                        p.slope_r.index()
+                    };
+                    (&["12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct"], Some(cur as usize))
+                }
+                MenuKind::Color { target } => {
+                    let cur = match target {
+                        ColorTarget::Freq(true) => p.random_color_freq_l.index(),
+                        ColorTarget::Freq(false) => p.random_color_freq_r.index(),
+                        ColorTarget::Bw(true) => p.random_color_bw_l.index(),
+                        ColorTarget::Bw(false) => p.random_color_bw_r.index(),
+                        ColorTarget::Gain(true) => p.random_color_gain_l.index(),
+                        ColorTarget::Gain(false) => p.random_color_gain_r.index(),
+                        ColorTarget::Mix => p.random_color_mix.index(),
+                    };
+                    (
+                        &[
+                            tr(Key::Red),
+                            tr(Key::Yellow),
+                            tr(Key::Blue),
+                            tr(Key::Green),
+                        ],
+                        Some(cur as usize),
+                    )
+                }
+                MenuKind::RandomPicker => (
+                    &[
+                        tr(Key::Red),
+                        tr(Key::Yellow),
+                        tr(Key::Blue),
+                        tr(Key::Green),
+                    ],
+                    Some(self.selected_color),
+                ),
+                MenuKind::Preset(_) => (&[tr(Key::SaveHere), tr(Key::RestoreDefault)], None),
+            };
+            let items: Vec<native_menu::MenuItem> = labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| native_menu::MenuItem {
+                    label: *label,
+                    checked: checked == Some(i),
+                    enabled: true,
+                })
+                .collect();
+            match native_menu::popup(&items) {
+                native_menu::PopupResult::Selected(i) => {
+                    self.menu = None;
+                    self.menu_armed = false;
+                    match kind {
+                        MenuKind::Slope(is_l) => {
+                            ctx.automate(pid(if is_l { P::SlopeL } else { P::SlopeR }), i as f64 / 3.0);
+                        }
+                        MenuKind::Color { target } => {
+                            set_plain(ctx, target.color_id(), i as f64);
+                        }
+                        MenuKind::RandomPicker => {
+                            self.selected_color = i;
+                        }
+                        MenuKind::Preset(idx) => {
+                            if i == 0 {
+                                self.bank.save(idx, snapshot(&ctx.params()));
+                            } else if i == 1 {
+                                self.bank.slots[idx] = Some(defaults());
+                            }
+                        }
+                    }
+                    return;
+                }
+                native_menu::PopupResult::Dismissed => {
+                    self.menu = None;
+                    self.menu_armed = false;
+                    return;
+                }
+                native_menu::PopupResult::Unsupported => {}
+            }
+
             let mut keep = true;
             let just_opened = !self.menu_armed;
             self.menu_armed = true;
@@ -1471,6 +1559,9 @@ impl EditorUi<BandPassParams> for BandPassUi {
         if self.settings_open {
             self.draw_settings(ui);
         }
+        // 只有文本输入框真正打开时才让插件持有键盘焦点；其余时间把焦点
+        // 交给宿主，避免空格/方向键被插件吞掉。
+        openrm_ui::focus::set_text_focus(self.text_input.is_some());
     }
 
     fn state_changed(&mut self, ctx: &PluginContext<BandPassParams>) {

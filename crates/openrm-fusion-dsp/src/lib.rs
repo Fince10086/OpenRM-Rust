@@ -479,7 +479,7 @@ impl FusionCore {
         let gain = self.gain_linear();
 
         for bar in &self.bars {
-            if !bar.active || bar.mute {
+            if !bar.active {
                 continue;
             }
             let theta_a = (2.0 * (bar.pan - 0.5) - bar.width).clamp(-1.0, 1.0);

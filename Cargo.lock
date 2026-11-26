@@ -1684,6 +1684,7 @@ dependencies = [
  "clap-sys",
  "egui",
  "egui-wgpu",
+ "openrm-dsp",
  "openrm-fusion-dsp",
  "openrm-ui",
  "png 0.17.16",

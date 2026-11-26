@@ -19,6 +19,7 @@ pub fn guard(editor: Box<dyn Editor>, background: Color32) -> Box<dyn Editor> {
             inner: editor,
             background,
             overlay: None,
+            focus: None,
         })
     }
     #[cfg(not(target_os = "macos"))]
@@ -33,6 +34,7 @@ struct MacFlashGuard {
     inner: Box<dyn Editor>,
     background: Color32,
     overlay: Option<Overlay>,
+    focus: Option<super::focus::Guard>,
 }
 
 #[cfg(target_os = "macos")]
@@ -59,16 +61,26 @@ impl Editor for MacFlashGuard {
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         self.remove_overlay();
+        self.focus = None;
+        let mut focus_parent = None;
         if let RawWindowHandle::AppKit(ptr) = parent {
-            self.overlay = unsafe { install_overlay(ptr.cast(), self.background) };
+            let raw = ptr.cast();
+            // 先记住宿主原来的 first responder，open 后好把键盘还回去。
+            let previous = super::focus::capture(raw);
+            focus_parent = Some((raw, previous));
+            self.overlay = unsafe { install_overlay(raw, self.background) };
         }
-        // 遮罩先挂上，再等后台预热（若还在跑），最后才让 baseview 建
-        // 子窗口；这样 wgpu 初始化期间宿主看到的已经是界面底色。
+        // 遮罩先挂上；预热已完成就回收线程，未完成也绝不在 open 里 join。
+        // 这样 wgpu 初始化期间宿主看到的是界面底色，而不是被预热卡住。
         crate::gpu::wait();
         self.inner.open(parent, context);
+        if let Some((raw, previous)) = focus_parent {
+            self.focus = super::focus::install(raw, previous);
+        }
     }
 
     fn close(&mut self) {
+        self.focus = None;
         self.remove_overlay();
         self.inner.close();
     }
@@ -135,7 +147,7 @@ unsafe fn install_overlay(
     background: Color32,
 ) -> Option<Overlay> {
     use objc2::{MainThreadMarker, MainThreadOnly};
-    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
     use objc2_core_graphics::CGColor;
 
     if parent.is_null() {
@@ -160,7 +172,10 @@ unsafe fn install_overlay(
         );
         layer.setBackgroundColor(Some(&color));
     }
-    parent.addSubview(&view);
+    // 必须放在所有现有子视图之下：baseview 的子视图才是真正画界面的层。
+    // 用 addSubview 会把它放到最上层；首开时 baseview 后加还能盖住它，
+    // 但关闭再打开时顺序一旦变化，遮罩就会永久盖住界面，表现为白屏。
+    parent.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, None);
     // 父视图会 retain 这个子视图；这里也保留一份，确保 close 时指针有效。
     Some(Overlay(view))
 }

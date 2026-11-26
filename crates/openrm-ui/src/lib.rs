@@ -5,6 +5,8 @@
 //! 这样宿主自动化手势的边界只有一处。
 
 pub mod flash;
+pub mod focus;
+pub mod native_menu;
 pub mod fonts;
 pub mod gpu;
 pub mod preset;

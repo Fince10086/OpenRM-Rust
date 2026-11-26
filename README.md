@@ -175,13 +175,19 @@ Fusion 的 DSP 来自原 `GRM-Rust/crates/grm-fusion-dsp`，迁移时只改了 c
 - **共用数据**（`crates/openrm-ui/src/preset.rs`）：24 槽 `PresetBank`（9–24 网格 +
   1–8 quick、拖动交换编号）、100 步 `History`、预设切换的 `Fade`。
 - **共用字体**：Outfit 三档（Latin）+ OPPO Sans 4.0 三档（GB2312 中文子集），
-  `Mixed` 缺字不再出现方框；字号取整像素以改善中文抗锯齿。
-- Fusion 自己的部分：8 个 band 开关、时间×频率平面（X=时间、Y=频率，拖动中心改
-  时间/频率）、顶部 中心/延迟/长度/角度/幅度 读数、底部 幅度/反馈/声像/宽度
-  四个滑块、共用的 RANDOM（范围/速度/取色）、贴平面右缘的增益条、混合、FFT
-  尺寸设置（256…131k）。
+  `Mixed` 缺字不再出现方框；字号取整像素以改善中文抗锯齿。Regular 家族把
+  Outfit/Mixed 放在中文子集和 egui 兜底字体之前，标准字重的英文/数字优先
+  命中 Outfit。
+- Fusion 自己的部分：8 个 band 开关、时间×频率平面（X 为线性时间轴，左
+  10s、右 0；Y 为 20Hz–24kHz 对数频率轴；拖动中心改时间/频率）、顶部
+  中心/延迟/长度/角度 四个读数、底部 幅度/反馈/声像/宽度 四个滑块（与顶部
+  同一套 `value_row` 单行样式）、共用的 RANDOM（范围/速度/取色）、贴平面
+  右缘的增益条、混合、FFT 尺寸设置（256…131k）。
+- **输入频谱**：XY Pad 背后叠一层灰色瀑布，取处理前的干信号，按 10 秒时间窗
+  从右（最新）向左滚动，频率范围与平面上的频段线共用 20Hz–20kHz 的对数映射。
 - 数据与 BandPass 对齐：`.orm` 24 槽预设表、`~/Library/Application Support/OpenRM/ORMFusion.settings`、
-  Cmd+单击存槽、右键存档/恢复默认、quick/fade 吸附、撤销重做。
+  Cmd+单击存槽、右键存档/恢复默认、quick/fade 吸附、撤销重做。右键菜单使用
+  macOS 原生 `NSMenu`，点击菜单外由系统自动关闭。
 
 截图：`docs/screenshots/fusion-m3.png`（8 段全开）、`fusion-m3-dark.png`（深色主题）。
 BandPass 的当前渲染在 `docs/screenshots/bandpass-m6.png`。
@@ -200,6 +206,8 @@ cargo test -p orm-bandpass --no-default-features   # 只跑逻辑，不编译格
 
 cargo install cargo-truce      # 一次性
 cargo run -p orm-bandpass --example shot   # 渲染 BandPass 界面截图（target/bandpass-ui.png）
+cargo run -p orm-fusion --example shot     # 渲染 Fusion 界面截图（target/fusion-ui.png）
+FUSION_SHOT_SPECTRUM=1 cargo run -p orm-fusion --example shot  # 用合成音频演示频谱
 cargo run -p orm-analyzer --example shot   # 渲染 Analyzer 界面截图（docs/screenshots/analyzer-m1.png）
 cargo truce run                # 独立运行，不需要 DAW
 cargo truce install --clap     # 装到 ~/Library/Audio/Plug-Ins/CLAP

@@ -80,13 +80,34 @@ fn main() {
     // 图标纹理在第一帧才创建；这里累计两帧的纹理增量，否则只渲染第二帧
     // 的截图会拿到一个尚未上传的空纹理。
     let mut textures = egui::TexturesDelta::default();
-    for pass in 0..2 {
+    // 可选：给频谱瀑布灌入约 10 秒合成音频，方便验收 XY Pad 下的灰色频谱。
+    let spectrum_demo = std::env::var("FUSION_SHOT_SPECTRUM").is_ok();
+    if spectrum_demo {
+        params.host.set_sample_rate(48_000.0);
+    }
+    let passes = if spectrum_demo { 64 } else { 2 };
+    for pass in 0..passes {
+        if spectrum_demo {
+            let mut frames = Vec::with_capacity(8192 * 2);
+            for i in 0..8192 {
+                let t = (pass * 8192 + i) as f32 / 48_000.0;
+                let env = 0.35 + 0.3 * (t * 0.8).sin().abs();
+                let s = env
+                    * ((std::f32::consts::TAU * 180.0 * t).sin() * 0.35
+                        + (std::f32::consts::TAU * 900.0 * t).sin() * 0.45
+                        + (std::f32::consts::TAU * 3_600.0 * t).sin() * 0.3
+                        + (std::f32::consts::TAU * 9_000.0 * t).sin() * 0.18);
+                frames.push(s);
+                frames.push(s);
+            }
+            params.host.tap.push_frames(&frames);
+        }
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(w_pt, h_pt),
             )),
-            time: Some(0.0),
+            time: Some(pass as f64 * 0.033),
             focused: true,
             ..Default::default()
         };

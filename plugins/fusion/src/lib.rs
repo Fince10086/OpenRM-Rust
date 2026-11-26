@@ -22,6 +22,7 @@ pub struct FusionDsp {
     in_r: Vec<f32>,
     out_l: Vec<f32>,
     out_r: Vec<f32>,
+    tap_buf: Vec<f32>,
     last_reset: u32,
 }
 
@@ -34,6 +35,7 @@ impl Default for FusionDsp {
             in_r: Vec::new(),
             out_l: Vec::new(),
             out_r: Vec::new(),
+            tap_buf: Vec::new(),
             last_reset: 0,
         }
     }
@@ -88,17 +90,11 @@ impl FusionDsp {
             72..=79 => {
                 self.core.bars[(id - 72) as usize].active = v >= 0.5;
             }
-            80..=87 => {
-                self.core.bars[(id - 80) as usize].mute = v >= 0.5;
-            }
+            // 80..=87 是旧版的单段 Mute；静音功能已移除，参数仅为兼容宿主保留。
             88 if v >= 0.5 => {
                 self.core.reset();
             }
-            89 if v >= 0.5 => {
-                for bar in &mut self.core.bars {
-                    bar.mute = true;
-                }
-            }
+            // 89 是旧版的全局 Mute，同样不再生效。
             _ => {}
         }
     }
@@ -129,6 +125,8 @@ impl PluginLogic for Fusion {
             buf.clear();
             buf.resize(max_block, 0.0);
         }
+        state.tap_buf.clear();
+        state.tap_buf.resize(max_block * 2, 0.0);
     }
 
     fn process(
@@ -159,12 +157,23 @@ impl PluginLogic for Fusion {
                 buf.resize(len, 0.0);
             }
         }
+        if state.tap_buf.len() < n * 2 {
+            state.tap_buf.resize(n * 2, 0.0);
+        }
         state.in_l[..n].copy_from_slice(&buffer.input(0)[..n]);
         if nch > 1 {
             state.in_r[..n].copy_from_slice(&buffer.input(1)[..n]);
         } else {
             state.in_r[..n].copy_from_slice(&state.in_l[..n]);
         }
+
+        // 把干信号推给 UI 侧的频谱历史。分配在音频线程之外，块大小
+        // 变化时只 resize 一次。
+        for i in 0..n {
+            state.tap_buf[i * 2] = state.in_l[i];
+            state.tap_buf[i * 2 + 1] = state.in_r[i];
+        }
+        params.host.tap.push_frames(&state.tap_buf[..n * 2]);
 
         state.core.process(
             &state.in_l[..n],

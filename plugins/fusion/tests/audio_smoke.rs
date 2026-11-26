@@ -33,15 +33,14 @@ fn default_band_passes_its_center() {
 }
 
 #[test]
-fn muted_outputs_silence() {
+fn legacy_global_mute_is_ignored() {
     let result = driver!(Plugin)
         .sample_rate(FS)
         .duration(Duration::from_secs(2))
         .input(tone(375.0))
-        .set_param(72u32, 0.0)
         .set_param(89u32, 1.0)
         .run();
     let tail = &result.output[0][result.output[0].len() / 2..];
-    println!("muted rms = {}", rms(tail));
-    assert!(rms(tail) < 1e-4);
+    println!("legacy mute rms = {}", rms(tail));
+    assert!(rms(tail) > 1e-3);
 }

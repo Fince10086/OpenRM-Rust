@@ -186,6 +186,12 @@ Fusion 的 DSP 来自原 `GRM-Rust/crates/grm-fusion-dsp`，迁移时只改了 c
 截图：`docs/screenshots/fusion-m3.png`（8 段全开）、`fusion-m3-dark.png`（深色主题）。
 BandPass 的当前渲染在 `docs/screenshots/bandpass-m6.png`。
 
+- **边缘抗锯齿**：工具栏的撤销/重做/保存/读取图标与齿轮改用 `tiny-skia`
+  128px 预栅格纹理，小圆点关闭 egui 的字体图集预栅格圆盘，曲线、斜线和圆
+  都走覆盖率/feathering，不再出现 Retina 下的阶梯。
+- **打开首帧**：`Editor::open` 前先在宿主父视图铺一层与 `col_100()` 同色的
+  遮罩，并等待后台 wgpu 预热结束，避免 Metal 初始化期间露出宿主白底。
+
 ## 构建与测试
 
 ```sh

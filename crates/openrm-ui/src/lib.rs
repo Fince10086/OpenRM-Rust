@@ -4,7 +4,9 @@
 //! （`PadAction` 之类），由插件层负责 `begin_edit / set_param / end_edit`，
 //! 这样宿主自动化手势的边界只有一处。
 
+pub mod flash;
 pub mod fonts;
+pub mod gpu;
 pub mod preset;
 pub mod shell;
 pub mod strings;

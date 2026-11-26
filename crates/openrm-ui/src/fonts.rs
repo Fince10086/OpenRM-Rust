@@ -76,6 +76,12 @@ pub fn install(ctx: &egui::Context) {
     // 取尚不存在的 Named family，宿主里重开编辑器时会直接空白。
     NAMED_READY.store(false, Ordering::Relaxed);
     ctx.set_fonts(definitions());
+    // egui 默认会把很小的实心圆替换成字体图集里的预栅格圆点。那些圆点
+    // 是按字体 atlas 的像素密度生成的，放到 2x 屏或随机球上会直接看出
+    // 阶梯。统一走 epaint 的路径 + feathering 抗锯齿。
+    ctx.tessellation_options_mut(|o| {
+        o.prerasterized_discs = false;
+    });
 }
 
 /// 首帧的字体集在 `ui()` 里才装上，egui 要到下一帧才把命名字体族生效。

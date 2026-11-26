@@ -2,7 +2,9 @@
 //! 画布一一对应，方便逐屏对照。
 
 use egui::{Align2, Color32, CursorIcon, Id, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
+use std::collections::HashMap;
 use std::f32::consts::PI;
+use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
 
 use crate::{fonts, theme::{self, Theme}};
 
@@ -1208,7 +1210,7 @@ pub fn preset_slot(
     out
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Undo,
     Redo,
@@ -1352,116 +1354,187 @@ const EXPORT_PATH: &[SvgCmd] = &[
     SvgCmd(3, [0., 0., 0., 0., 0., 0.]),
 ];
 
-fn draw_svg_path(p: &egui::Painter, rect: Rect, cmds: &[SvgCmd], color: Color32) {
-    let cx = rect.center().x;
-    let cy = rect.center().y;
-    let s = 18.5 / 1024.0;
-    let map = |x: f32, y: f32| Pos2::new(cx + (x - 512.0) * s, cy + (y - 512.0) * s);
-    let mut subpaths: Vec<Vec<Pos2>> = Vec::new();
-    let mut cur: Vec<Pos2> = Vec::new();
-    let mut last = Pos2::ZERO;
-    let mut i = 0;
-    while i < cmds.len() {
-        let e = &cmds[i];
+/// 图标在画布上的逻辑尺寸：与原 SVG 的 1024 网格缩放保持一致。
+const ICON_DRAW_SIZE: f32 = 18.5;
+/// 每张图标纹理的栅格分辨率。实际绘制约 37 px（2x），128 px 留出足够
+/// 的降采样余量，避免细小曲线在缩小时重新出现阶梯。
+const ICON_TEXTURE_SIZE: u32 = 128;
+
+fn icon_key(icon: Icon) -> u8 {
+    match icon {
+        Icon::Undo => 0,
+        Icon::Redo => 1,
+        Icon::Save => 2,
+        Icon::Load => 3,
+    }
+}
+
+#[derive(Clone, Default)]
+struct IconTextures {
+    map: HashMap<u8, egui::TextureHandle>,
+}
+
+/// 用 tiny-skia 的扫描线抗锯齿栅格化，而不是自己拼 0.2/0.28 的四边形：
+/// 后者的边缘没有覆盖率，曲线和斜线会在 2x 屏上出现明显台阶。
+fn rasterize_icon(icon: Icon, px: u32) -> egui::ColorImage {
+    let cmds = match icon {
+        Icon::Undo => UNDO_PATH,
+        Icon::Redo => REDO_PATH,
+        Icon::Save => EXPORT_PATH,
+        Icon::Load => IMPORT_PATH,
+    };
+    let mut builder = PathBuilder::new();
+    let mut open = false;
+    for e in cmds {
         match e.0 {
             0 => {
-                if cur.len() > 1 {
-                    subpaths.push(cur.clone());
+                if open {
+                    builder.close();
                 }
-                cur.clear();
-                last = map(e.1[0], e.1[1]);
-                cur.push(last);
+                builder.move_to(e.1[0], e.1[1]);
+                open = true;
             }
             1 => {
-                last = map(e.1[0], e.1[1]);
-                cur.push(last);
+                builder.line_to(e.1[0], e.1[1]);
             }
             2 => {
-                let c1 = map(e.1[0], e.1[1]);
-                let c2 = map(e.1[2], e.1[3]);
-                let to = map(e.1[4], e.1[5]);
-                for k in 1..=14 {
-                    let t = k as f32 / 14.0;
-                    let inv = 1.0 - t;
-                    let w0 = inv * inv * inv;
-                    let w1 = 3.0 * inv * inv * t;
-                    let w2 = 3.0 * inv * t * t;
-                    let w3 = t * t * t;
-                    cur.push(Pos2::new(
-                        last.x * w0 + c1.x * w1 + c2.x * w2 + to.x * w3,
-                        last.y * w0 + c1.y * w1 + c2.y * w2 + to.y * w3,
-                    ));
-                }
-                last = to;
+                builder.cubic_to(e.1[0], e.1[1], e.1[2], e.1[3], e.1[4], e.1[5]);
             }
             _ => {
-                if cur.len() > 1 {
-                    subpaths.push(cur.clone());
+                if open {
+                    builder.close();
+                    open = false;
                 }
-                cur.clear();
             }
         }
-        i += 1;
     }
-    if cur.len() > 1 {
-        subpaths.push(cur);
+    if open {
+        builder.close();
     }
-    // 用扫描线做奇偶填充：SVG 图标的轮廓是凹多边形，直接三角扇会破形。
-    let mut edges: Vec<(Pos2, Pos2)> = Vec::new();
-    for sp in &subpaths {
-        for i in 0..sp.len() {
-            edges.push((sp[i], sp[(i + 1) % sp.len()]));
-        }
-    }
-    let ymin = subpaths
-        .iter()
-        .flat_map(|sp| sp.iter().map(|q| q.y))
-        .fold(f32::MAX, f32::min);
-    let ymax = subpaths
-        .iter()
-        .flat_map(|sp| sp.iter().map(|q| q.y))
-        .fold(f32::MIN, f32::max);
-    if ymax <= ymin {
-        return;
-    }
-    // 2x 超采样扫描线：细笔画的箭头只有 1–2px 厚，步长 0.5 会留下毛刺；
-    // 这里用 0.2 步长、行高 0.28 的四边形拼一个 Mesh，一次提交。
-    let mut mesh = egui::Mesh::default();
-    let mut y = ymin;
-    while y <= ymax {
-        let mut xs: Vec<f32> = Vec::new();
-        for (a, b) in &edges {
-            if (a.y <= y && b.y > y) || (b.y <= y && a.y > y) {
-                let t = (y - a.y) / (b.y - a.y);
-                xs.push(a.x + (b.x - a.x) * t);
+    let path = builder.finish().expect("图标路径闭合失败");
+    let mut pixmap = Pixmap::new(px, px).expect("图标纹理尺寸非法");
+    let mut paint = Paint::default();
+    // 白色 + 预乘 alpha：绘制时用 tint 上主题色，文字/图标即可在深浅主题
+    // 间复用同一张纹理。
+    paint.set_color(tiny_skia::Color::WHITE);
+    paint.anti_alias = true;
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::from_scale(px as f32 / 1024.0, px as f32 / 1024.0),
+        None,
+    );
+    egui::ColorImage::from_rgba_premultiplied(
+        [px as usize, px as usize],
+        pixmap.data(),
+    )
+}
+
+fn rasterize_gear(px: u32) -> egui::ColorImage {
+    let center = px as f32 * 0.5;
+    let r = center * 60.0 / 64.0;
+    let mut builder = PathBuilder::new();
+    builder.push_circle(center, center, r * 0.72);
+    for i in 0..8 {
+        let a = i as f32 * PI / 4.0;
+        let q = [
+            (-r * 0.17, -r),
+            (r * 0.17, -r),
+            (r * 0.17, -r * 0.70),
+            (-r * 0.17, -r * 0.70),
+        ];
+        for (j, (x0, y0)) in q.into_iter().enumerate() {
+            let rx = x0 * a.cos() - y0 * a.sin() + center;
+            let ry = x0 * a.sin() + y0 * a.cos() + center;
+            if j == 0 {
+                builder.move_to(rx, ry);
+            } else {
+                builder.line_to(rx, ry);
             }
         }
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let mut i = 0;
-        while i + 1 < xs.len() {
-            if xs[i + 1] - xs[i] > 0.01 {
-                let (x0, x1) = (xs[i], xs[i + 1]);
-                let i0 = mesh.vertices.len() as u32;
-                for p in [
-                    Pos2::new(x0, y),
-                    Pos2::new(x1, y),
-                    Pos2::new(x1, y + 0.28),
-                    Pos2::new(x0, y + 0.28),
-                ] {
-                    mesh.vertices.push(egui::epaint::Vertex {
-                        pos: p,
-                        uv: egui::epaint::WHITE_UV,
-                        color,
-                    });
-                }
-                mesh.indices
-                    .extend_from_slice(&[i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
-            }
-            i += 2;
-        }
-        y += 0.2;
+        builder.close();
     }
-    p.add(Shape::mesh(mesh));
+    let path = builder.finish().expect("齿轮路径闭合失败");
+    let mut pixmap = Pixmap::new(px, px).expect("齿轮纹理尺寸非法");
+    let mut paint = Paint::default();
+    paint.set_color(tiny_skia::Color::WHITE);
+    paint.anti_alias = true;
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+    egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data())
+}
+
+fn gear_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let cache_id = Id::new("openrm_icon_textures_v1");
+    let key = 4u8;
+    if let Some(tex) = ctx
+        .data(|d| d.get_temp::<IconTextures>(cache_id))
+        .and_then(|c| c.map.get(&key).cloned())
+    {
+        return tex;
+    }
+    let tex = ctx.load_texture(
+        "openrm-gear",
+        rasterize_gear(ICON_TEXTURE_SIZE),
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<IconTextures>(cache_id)
+            .map
+            .insert(key, tex.clone());
+    });
+    tex
+}
+
+fn draw_gear(ui: &Ui, rect: Rect, r: f32, color: Color32) {
+    let tex = gear_texture(ui.ctx());
+    let side = 2.0 * r * 64.0 / 60.0;
+    let draw_rect = Rect::from_center_size(rect.center(), Vec2::splat(side));
+    ui.painter_at(rect).image(
+        tex.id(),
+        draw_rect,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        color,
+    );
+}
+
+fn icon_texture(ctx: &egui::Context, icon: Icon) -> egui::TextureHandle {
+    let cache_id = Id::new("openrm_icon_textures_v1");
+    if let Some(tex) = ctx
+        .data(|d| d.get_temp::<IconTextures>(cache_id))
+        .and_then(|c| c.map.get(&icon_key(icon)).cloned())
+    {
+        return tex;
+    }
+    let key = icon_key(icon);
+    let tex = ctx.load_texture(
+        format!("openrm-icon-{key}"),
+        rasterize_icon(icon, ICON_TEXTURE_SIZE),
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<IconTextures>(cache_id)
+            .map
+            .insert(key, tex.clone());
+    });
+    tex
+}
+
+fn draw_icon(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
+    let tex = icon_texture(ui.ctx(), icon);
+    let draw_rect = Rect::from_center_size(rect.center(), Vec2::splat(ICON_DRAW_SIZE));
+    ui.painter_at(rect).image(
+        tex.id(),
+        draw_rect,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        color,
+    );
 }
 
 pub fn icon_button(
@@ -1483,13 +1556,7 @@ pub fn icon_button(
     if resp.hovered() {
         p.rect_filled(rect, 0, theme.hover_overlay());
     }
-    let path = match icon {
-        Icon::Undo => UNDO_PATH,
-        Icon::Redo => REDO_PATH,
-        Icon::Save => EXPORT_PATH,
-        Icon::Load => IMPORT_PATH,
-    };
-    draw_svg_path(&p, rect, path, theme.col_900());
+    draw_icon(ui, rect, icon, theme.col_900());
     resp.clicked()
 }
 
@@ -1506,27 +1573,10 @@ pub fn gear_button(ui: &mut Ui, rect: Rect, theme: &Theme, id: Id, tip: Option<&
     } else {
         theme.col_700()
     };
-    let cx = rect.center().x;
-    let cy = rect.center().y;
     let r = (rect.width() * 0.5 - 2.0) * 0.8;
-    p.circle_filled(Pos2::new(cx, cy), r * 0.72, c);
-    // 齿：局部矩形 -0.17r..0.17r × -r..-0.70r，按 i*45° 旋转
-    for i in 0..8 {
-        let a = i as f32 * PI / 4.0;
-        let q = [
-            Pos2::new(-r * 0.17, -r),
-            Pos2::new(r * 0.17, -r),
-            Pos2::new(r * 0.17, -r * 0.70),
-            Pos2::new(-r * 0.17, -r * 0.70),
-        ];
-        let rot: Vec<Pos2> = q
-            .iter()
-            .map(|v| Pos2::new(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos()))
-            .map(|v| Pos2::new(v.x + cx, v.y + cy))
-            .collect();
-        p.add(Shape::convex_polygon(rot, c, Stroke::NONE));
-    }
-    p.circle_filled(Pos2::new(cx, cy), r * 0.30, theme.col_100());
+    draw_gear(ui, rect, r, c);
+    // 中心孔用背景色覆盖，保留原来的空心齿轮造型。
+    p.circle_filled(rect.center(), r * 0.30, theme.col_100());
     resp.clicked()
 }
 
@@ -1694,5 +1744,21 @@ mod tests {
             );
         }
         assert!(edit.color_menu, "随机色块右键应打开取色菜单");
+    }
+
+    #[test]
+    fn icons_are_rasterized_with_antialiased_edges() {
+        for icon in [Icon::Undo, Icon::Redo, Icon::Save, Icon::Load] {
+            let image = rasterize_icon(icon, ICON_TEXTURE_SIZE);
+            assert_eq!(image.size, [ICON_TEXTURE_SIZE as usize; 2]);
+            let opaque = image.pixels.iter().filter(|p| p.a() == 255).count();
+            let soft = image
+                .pixels
+                .iter()
+                .filter(|p| p.a() > 0 && p.a() < 255)
+                .count();
+            assert!(opaque > 100, "图标 {icon:?} 没画出实体");
+            assert!(soft > 50, "图标 {icon:?} 边缘没有抗锯齿覆盖率");
+        }
     }
 }

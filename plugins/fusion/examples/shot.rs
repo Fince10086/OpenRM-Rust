@@ -77,6 +77,9 @@ fn main() {
     let ppp = 2.0f32;
 
     let mut output = None;
+    // 图标纹理在第一帧才创建；这里累计两帧的纹理增量，否则只渲染第二帧
+    // 的截图会拿到一个尚未上传的空纹理。
+    let mut textures = egui::TexturesDelta::default();
     for pass in 0..2 {
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -91,13 +94,16 @@ fn main() {
             .entry(egui::ViewportId::ROOT)
             .or_default()
             .native_pixels_per_point = Some(ppp);
-        output = Some(egui_ctx.run_ui(raw, |ui| {
+        let out = egui_ctx.run_ui(raw, |ui| {
             ui_state.ui(ui, &plugin_ctx);
-        }));
+        });
+        textures.append(out.textures_delta.clone());
+        output = Some(out);
         let _ = pass;
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let output = output.unwrap();
+    let mut output = output.unwrap();
+    output.textures_delta = textures;
     let (rgba, w, h) =
         render(&egui_ctx, output, (w_pt, h_pt), ppp).expect("需要可用的 wgpu 适配器");
 

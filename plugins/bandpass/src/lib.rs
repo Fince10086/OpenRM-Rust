@@ -52,6 +52,8 @@ impl PluginLogic for BandPass {
     type DspState = BandPassDsp;
 
     fn init(params: &BandPassParams, _cx: &InitContext) -> BandPassDsp {
+        // 插件实例化时预热 GPU；第一次打开编辑器不再同步编译整条管线。
+        openrm_ui::gpu::prewarm();
         // 采样率在 reset() 才确定，这里只建空状态。
         let mut state = BandPassDsp::default();
         state.tap = Some(Arc::clone(&params.analysis.tap));

@@ -109,6 +109,9 @@ impl PluginLogic for Fusion {
     type DspState = FusionDsp;
 
     fn init(_params: &FusionParams, _cx: &InitContext) -> FusionDsp {
+        // 趁插件实例化、用户还没打开界面时把 Metal/wgpu 管线热起来，
+        // 避免第一次 open 时同步建管线造成白屏/长时间空白。
+        openrm_ui::gpu::prewarm();
         FusionDsp::default()
     }
 

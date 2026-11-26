@@ -1542,14 +1542,17 @@ impl BandPassUi {
 }
 
 pub fn create(params: Arc<BandPassParams>) -> Box<dyn Editor> {
-    truce_egui::EguiEditor::with_ui(
+    let ui = BandPassUi::default();
+    let background = ui.theme.col_100();
+    let editor = truce_egui::EguiEditor::with_ui(
         params,
         (UI_WIDTH as u32, UI_HEIGHT as u32),
-        BandPassUi::default(),
+        ui,
     )
     .with_font(fonts::REGULAR)
     .resizable(false)
-    .into_editor()
+    .into_editor();
+    openrm_ui::flash::guard(editor, background)
 }
 
 #[cfg(test)]

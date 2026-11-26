@@ -1552,6 +1552,11 @@ impl EditorUi<FusionParams> for FusionUi {
         self.font_stage = 0;
         self.styled = false;
         self.last_time = 0.0;
+        // 频谱纹理句柄属于旧的 egui::Context。新 Context 会重新分配
+        // managed texture 索引；旧句柄可能指向图标纹理（撤销图标），
+        // 结果 pad 背景被整张撤销图铺满。丢弃旧频谱，让新 Context
+        // 重新创建纹理。
+        self.spectrum = None;
     }
 
     fn ui(&mut self, ui: &mut Ui, ctx: &PluginContext<FusionParams>) {
